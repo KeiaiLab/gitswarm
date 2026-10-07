@@ -124,3 +124,26 @@ def test_redact_url_truncates():
 def test_refusal_of_non_string_names_its_type():
     with pytest.raises(InvalidState, match="int"):
         validate_remote_url(7)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://ghp_SECRET@host/o/r",
+        "https://usr:SECRET@host/o/r",
+        "http://SECRET@host/o/r",
+        "git://SECRET@host/o/r",
+    ],
+)
+def test_refuses_userinfo_outside_ssh(url: str):
+    with pytest.raises(InvalidState) as e:
+        validate_remote_url(url)
+    assert "***@host/o/r" in e.value.detail
+    assert "SECRET" not in e.value.detail
+
+
+@pytest.mark.parametrize(
+    "url", ["ssh://git@host/o/r", "git+ssh://git@host/o/r", "git@github.com:o/r.git"]
+)
+def test_accepts_ssh_login_names(url: str):
+    assert validate_remote_url(url) == url

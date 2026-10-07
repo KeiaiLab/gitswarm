@@ -61,8 +61,9 @@ coordinator (has gitswarm)            other host (git only)
 With a token adapter ([Forgejo](forgejo-tokens.md), [GitHub](github-app.md))
 `ws create` returns `token`, a credential scoped to that repository. Give
 it to the other host's git through a credential helper or the
-environment, never inside the URL; gitswarm refuses URLs with credentials,
-and a URL ends up in shell history and `.git/config`. The token is shown
+environment, never inside the URL: credentials (userinfo) in http(s)/git
+URLs are refused — use a credential helper; ssh login names are fine. A
+URL also ends up in shell history and `.git/config`. The token is shown
 once and revoked on `ws drop` (GitHub tokens instead expire after one
 hour).
 

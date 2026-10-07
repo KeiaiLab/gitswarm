@@ -235,8 +235,9 @@ target = "~/.gitswarm/events.jsonl"
 없다 — `drop` 이 만료 시각을 stderr 에 적는다. 준비: [forgejo-tokens.md](docs/recipes/forgejo-tokens.md),
 [github-app.md](docs/recipes/github-app.md).
 
-**URL 안의 자격은 거절한다.** `https://user:token@host/…` 는 `InvalidState`. git credential
-helper 를 쓴다.
+**URL:** http(s)/git URL 안의 자격(userinfo)은 거절한다 — credential helper 를 쓴다. ssh 로그인
+이름은 괜찮다. `https://user:token@host/…`·`https://token@host/…` 는 `InvalidState`(오류에는
+`https://***@host/…` 로 보인다), `ssh://git@host/…`·`git@host:…` 는 받는다.
 
 ## 권한 경계
 

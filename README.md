@@ -249,8 +249,10 @@ installation tokens last one hour and cannot be revoked by id; `drop`
 prints their expiry to stderr. Setup: [forgejo-tokens.md](docs/recipes/forgejo-tokens.md),
 [github-app.md](docs/recipes/github-app.md).
 
-**Credentials in URLs are refused.** `https://user:token@host/…` fails
-with `InvalidState`. Use a git credential helper.
+**URLs:** credentials (userinfo) in http(s)/git URLs are refused — use a
+credential helper; ssh login names are fine. `https://user:token@host/…`
+and `https://token@host/…` fail with `InvalidState` (the error shows
+`https://***@host/…`); `ssh://git@host/…` and `git@host:…` are accepted.
 
 ## Authorization boundary
 

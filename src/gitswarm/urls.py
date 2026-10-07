@@ -15,7 +15,10 @@ import re
 from gitswarm.errors import InvalidState
 
 ALLOWED_SCHEMES = frozenset({"ssh", "git+ssh", "https", "http", "git", "file"})
-SSH_SCHEMES = frozenset({"ssh", "git+ssh"})
+SSH_SCHEMES = frozenset({"ssh", "git+ssh"})  # userinfo 는 로그인 이름이다(git@)
+# 이 scheme 의 userinfo 는 자격뿐이다(토큰만 든 user 포함) — credential helper 를 쓰게 거절한다
+NO_USERINFO_SCHEMES = frozenset({"http", "https", "git"})
+USERINFO_MARK = "@"
 LOCAL_SCHEME = "file"  # authority 가 비어도 되는 유일한 scheme(file:///abs)
 SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(.*)$", re.DOTALL)
 TRANSPORT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*::")  # ext::, fd:: …
@@ -41,7 +44,7 @@ def redact_url(url: str) -> str:
     m = SCHEME_RE.match(url)
     if m:
         authority, slash, path = m.group(2).partition("/")
-        if "@" in authority:
+        if USERINFO_MARK in authority:
             host = authority.rpartition("@")[2]
             url = f"{m.group(1)}://{REDACTED_USERINFO}@{host}{slash}{path}"
 
@@ -78,6 +81,8 @@ def validate_remote_url(url: str) -> str:
         scheme, rest = m.group(1).lower(), m.group(2)
         authority = rest.split("/", 1)[0]
         if scheme not in ALLOWED_SCHEMES:
+            raise _refuse(url)
+        if scheme in NO_USERINFO_SCHEMES and USERINFO_MARK in authority:
             raise _refuse(url)
         if authority == "" and scheme == LOCAL_SCHEME:
             return url
