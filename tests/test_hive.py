@@ -193,3 +193,18 @@ def test_stale_temp_dirs_are_swept(remote_url: str, home: Path):
 
     Hive.init(remote_url, home)
     assert not stale.exists() and fresh.exists()
+
+
+def test_sweep_skips_a_temp_dir_that_vanishes(remote_url: str, home: Path, monkeypatch):
+    """남의 .tmp 는 잠금 밖에서 지워진다(진 init 의 정리) — glob 과 stat 사이에 사라져도 된다."""
+    gone = home / "hives" / f".tmp-{hive_id(remote_url)}-gone"
+    gone.mkdir(parents=True)
+    real_stat = Path.stat
+
+    def stat(self, *a, **kw):
+        if self == gone:
+            raise FileNotFoundError(self)
+        return real_stat(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    assert Hive.init(remote_url, home).url == remote_url

@@ -99,7 +99,12 @@ def _locked(path: Path) -> Iterator[None]:
 def _sweep_stale(path: Path, now: float) -> None:
     """죽은 init 이 남긴 .tmp-<id>-* 를 치운다. 짓는 중인 것(새것)은 건드리지 않는다."""
     for d in path.parent.glob(f"{TMP_PREFIX}{path.name}-*"):
-        if now - d.stat().st_mtime > STALE_TMP_S:
+        # 진 init 은 잠금 밖에서 제 .tmp 를 지운다 — glob 과 stat 사이에 사라질 수 있다
+        try:
+            age = now - d.stat().st_mtime
+        except FileNotFoundError:
+            continue
+        if age > STALE_TMP_S:
             shutil.rmtree(d, ignore_errors=True)
 
 
