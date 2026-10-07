@@ -76,6 +76,12 @@ def test_corrupt_hive_toml_is_invalid_state(remote_url: str, home: Path, text: s
 
 
 # ── 동시·재개 가능한 init ─────────────────────────────────────
+def _hive_dirs(home: Path) -> list[str]:
+    """완성된 hive 자리들. 짓는 중(.tmp-*)·잠금(.lock-*)이 남았으면 그것도 드러낸다."""
+    names = sorted(d.name for d in (home / "hives").iterdir())
+    return [n for n in names if not n.startswith(".lock-")]
+
+
 FIRST_LISTERS = 6
 
 
@@ -97,7 +103,7 @@ def test_concurrent_first_use_builds_one_hive(remote_url: str, home: Path):
     for p in procs:
         p.join(120)
     assert [p.exitcode for p in procs] == [0] * FIRST_LISTERS
-    assert [d.name for d in (home / "hives").iterdir()] == [hive_id(remote_url)]
+    assert _hive_dirs(home) == [hive_id(remote_url)]
 
 
 def test_interrupted_init_is_rebuilt(remote_url: str, home: Path):
@@ -128,7 +134,7 @@ def test_lost_race_uses_the_winner(remote_url: str, home: Path, monkeypatch):
     monkeypatch.setattr(Path, "exists", exists)
     again = hive_mod.Hive.init(remote_url, home)
     assert again.path == winner.path
-    assert [d.name for d in (home / "hives").iterdir()] == [hive_id(remote_url)]
+    assert _hive_dirs(home) == [hive_id(remote_url)]
 
 
 def test_init_bare_failure_is_remote_error(tmp_path: Path, monkeypatch):
@@ -142,3 +148,48 @@ def test_init_bare_failure_is_remote_error(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("gitswarm.driver.git.subprocess.run", fail)
     with pytest.raises(RemoteError, match="cannot mkdir"):
         Git.init_bare(tmp_path / "repo.git")
+
+
+INIT_THREADS = 6
+
+
+def test_concurrent_init_in_one_process_builds_one_hive(remote_url: str, home: Path):
+    """FastMCP 는 sync 도구를 스레드 풀에서 돌린다 — 같은 pid 의 init 들이 서로를 지우면 안 된다."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(INIT_THREADS) as pool:
+        hives = list(pool.map(lambda _: Hive.init(remote_url, home), range(INIT_THREADS)))
+    assert {h.path for h in hives} == {hives[0].path}
+    assert _hive_dirs(home) == [hive_id(remote_url)]
+
+
+def test_leftover_with_worktrees_is_not_removed(remote_url: str, home: Path):
+    from gitswarm.driver.git import Git
+    from gitswarm.errors import InvalidState
+    from gitswarm.store.hive import hive_path
+
+    leftover = hive_path(remote_url, home)
+    Git.init_bare(leftover / "repo.git")
+    (leftover / "wt" / "01J00000000000000000000000").mkdir(parents=True)
+    with pytest.raises(InvalidState, match="has worktrees"):
+        Hive.init(remote_url, home)
+    assert (leftover / "wt" / "01J00000000000000000000000").is_dir()
+    assert _hive_dirs(home) == [hive_id(remote_url)]
+
+
+def test_stale_temp_dirs_are_swept(remote_url: str, home: Path):
+    import os
+    import time
+
+    from gitswarm.store.hive import STALE_TMP_S
+
+    hives = home / "hives"
+    stale = hives / f".tmp-{hive_id(remote_url)}-old"
+    fresh = hives / f".tmp-{hive_id(remote_url)}-busy"
+    for d in (stale, fresh):
+        d.mkdir(parents=True)
+    old = time.time() - STALE_TMP_S - 1
+    os.utime(stale, (old, old))
+
+    Hive.init(remote_url, home)
+    assert not stale.exists() and fresh.exists()

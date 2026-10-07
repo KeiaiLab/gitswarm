@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import shutil
+import tempfile
+import time
 import tomllib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,8 +27,9 @@ WT_DIR = "wt"
 HIVE_FILE = "hive.toml"
 HIVE_ID_LEN = 16
 PROBE_REF = "HEAD"
-TMP_PREFIX = ".tmp-"  # 짓는 중인 hive: <hives>/.tmp-<id>-<pid>
-INSTALL_TRIES = 2  # 첫 rename 이 잔해에 막히면 치우고 한 번 더
+TMP_PREFIX = ".tmp-"  # 짓는 중인 hive: <hives>/.tmp-<id>-<무작위>
+LOCK_PREFIX = ".lock-"  # 설치 구간의 hive 별 잠금 파일: <hives>/.lock-<id>
+STALE_TMP_S = 3600  # 이보다 오래된 .tmp-<id>-* 는 죽은 init 의 잔해다
 
 
 def resolve_home() -> Path:
@@ -79,20 +85,36 @@ def _build(at: Path, url: str) -> None:
     (at / HIVE_FILE).write_text(_hive_toml(url))
 
 
-def _install(tmp: Path, path: Path) -> None:
-    """tmp 를 path 로 옮긴다. 남이 먼저 끝냈으면 그쪽을 쓰고 tmp 는 버린다.
-
-    hive.toml 없는 path 는 끊긴 옛 init 의 잔해다 — 치우고 다시 옮긴다.
-    """
-    for _ in range(INSTALL_TRIES):
+@contextmanager
+def _locked(path: Path) -> Iterator[None]:
+    """path 의 설치 구간을 프로세스·스레드 사이에서 하나씩. open 마다 새 fd 라 같은 pid 끼리도 막힌다."""
+    with open(path.with_name(f"{LOCK_PREFIX}{path.name}"), "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
         try:
-            os.rename(tmp, path)
-            return
-        except OSError:
-            if (path / HIVE_FILE).exists():
-                break
-            shutil.rmtree(path, ignore_errors=True)
-    shutil.rmtree(tmp, ignore_errors=True)
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def _sweep_stale(path: Path, now: float) -> None:
+    """죽은 init 이 남긴 .tmp-<id>-* 를 치운다. 짓는 중인 것(새것)은 건드리지 않는다."""
+    for d in path.parent.glob(f"{TMP_PREFIX}{path.name}-*"):
+        if now - d.stat().st_mtime > STALE_TMP_S:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def _install(tmp: Path, path: Path) -> None:
+    """잠금 안에서 tmp 를 path 로 옮긴다. 남이 먼저 끝냈으면 아무것도 안 한다(tmp 는 호출자가 버린다).
+
+    hive.toml 없는 path 는 끊긴 옛 init 의 잔해다 — worktree 가 없을 때만 치운다.
+    """
+    if (path / HIVE_FILE).exists():
+        return
+    if path.exists():
+        if any((path / WT_DIR).glob("*")):
+            raise InvalidState(f"{path} has worktrees but no {HIVE_FILE}; not removing it")
+        shutil.rmtree(path)
+    os.rename(tmp, path)
 
 
 def hive_path(url: str, home: Path) -> Path:
@@ -113,16 +135,17 @@ class Hive:
         if (path / HIVE_FILE).exists():
             return cls.open(url, home)
 
-        # 형제 임시 자리에서 다 지은 뒤 rename 한 번 — 최종 자리에는 완성본만 나타난다
-        tmp = path.with_name(f"{TMP_PREFIX}{path.name}-{os.getpid()}")
-        shutil.rmtree(tmp, ignore_errors=True)
+        # 호출마다 고유한 임시 자리에서 다 지은 뒤 잠금 안에서 rename 한 번
+        #   — 최종 자리에는 완성본만 나타나고, 같은 프로세스의 스레드끼리도 서로를 지우지 않는다
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = Path(tempfile.mkdtemp(prefix=f"{TMP_PREFIX}{path.name}-", dir=path.parent))
         try:
             _build(tmp, url)
-        except BaseException:
-            shutil.rmtree(tmp, ignore_errors=True)
-            raise
-
-        _install(tmp, path)
+            with _locked(path):
+                _sweep_stale(path, time.time())
+                _install(tmp, path)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)  # 옮겨졌으면 이미 없다
         return cls.open(url, home)
 
     @classmethod
