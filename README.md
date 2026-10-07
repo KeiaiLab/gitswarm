@@ -42,6 +42,9 @@ worktree 없이 브랜치만 받은 에이전트는 평범한 git 으로 일한�
     git clone -b gitswarm/ws/01J… ssh://git@host/org/repo.git
     … commit …
     git push origin HEAD
+    gitswarm ws publish 01J…   # records the remote tip as published
+
+push 만으로는 gitswarm 이 끝난 줄 모른다 — 마지막에 `ws publish` 로 원격 tip 을 발행 결과(`published_oid`)로 기록한다.
 
 ## 설정 `~/.gitswarm/config.toml`
 
@@ -75,7 +78,7 @@ GitHub 토큰은 대상 레포로 한정된 App installation token 이며 1시�
 
 쓰기는 `push --force-with-lease` 하나로 CAS. 설계: `docs/superpowers/specs/`.
 
-`ws publish` 의 lease 기준은 로컬 `refs/gitswarm/lease/…` 다 — worktree 에서 `git fetch`
+`ws publish` 는 원격 브랜치 tip 을 발행 결과로 기록한다(worktree 가 있으면 HEAD 를 먼저 push). lease 기준은 로컬 `refs/gitswarm/lease/…` 다 — worktree 에서 `git fetch`
 해도 옮겨지지 않는다. 남이 먼저 push 했으면 Conflict 이고, `git pull --rebase origin
 gitswarm/ws/<id>` 뒤 다시 publish 하면 된다.
 

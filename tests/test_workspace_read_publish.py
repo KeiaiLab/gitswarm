@@ -38,6 +38,7 @@ def test_read_and_tree_before_and_after_publish(svc: WorkspaceService):
     assert svc.publish(r.id) == head
     assert svc.read(r.id, "new.txt") == b"hi\n"
     assert svc.get(r.id).state is WsState.PUBLISHED
+    assert svc.get(r.id).published_oid == head
     names = sorted(e["name"] for e in svc.tree(r.id))
     assert names == ["README.md", "new.txt"]
     assert svc.tree(r.id)[0]["kind"] in {"blob", "tree"}
@@ -67,10 +68,53 @@ def test_tree_rejects_parent_traversal(svc: WorkspaceService, bad: str):
         svc.tree(r.id, bad)
 
 
-def test_publish_without_worktree_is_invalid(svc: WorkspaceService):
+def _push_more(svc: WorkspaceService, branch_ref: str, tmp_path: Path, name: str) -> str:
+    """다른 호스트가 같은 브랜치에 평범한 git 으로 push. 새 tip 을 돌려준다."""
+    other = tmp_path / "other"
+    if not other.exists():
+        subprocess.run(
+            [
+                "git", "clone", "-q", "-b", branch_ref.removeprefix("refs/heads/"),
+                svc.hive.url, str(other),
+            ],
+            check=True,
+        )  # fmt: skip
+    tip = _commit_file(other, name, "x\n")
+    git("push", "-q", "origin", "HEAD", cwd=other)
+    return tip
+
+
+def test_publish_without_worktree_records_remote_tip(svc: WorkspaceService, tmp_path: Path):
     r = svc.create("main", {}, 0, None, Checkout.NONE, {})
-    with pytest.raises(InvalidState):
+    tip = _push_more(svc, r.branch, tmp_path, "theirs.txt")
+    assert svc.publish(r.id) == tip
+    ws = svc.get(r.id)
+    assert ws.state is WsState.PUBLISHED
+    assert ws.published_oid == tip
+    assert svc.events(None)[0].payload["published_oid"] == tip
+
+
+def test_publish_without_worktree_at_base_is_invalid(svc: WorkspaceService):
+    r = svc.create("main", {}, 0, None, Checkout.NONE, {})
+    with pytest.raises(InvalidState, match="nothing published: branch is still at base"):
         svc.publish(r.id)
+    assert svc.get(r.id).state is WsState.OPEN
+
+
+def test_publish_without_worktree_missing_branch_is_not_found(svc: WorkspaceService):
+    r = svc.create("main", {}, 0, None, Checkout.NONE, {})
+    svc.hive.git.delete_remote(r.branch, None)
+    with pytest.raises(NotFound):
+        svc.publish(r.id)
+
+
+def test_republish_without_worktree_updates_tip(svc: WorkspaceService, tmp_path: Path):
+    r = svc.create("main", {}, 0, None, Checkout.NONE, {})
+    first = _push_more(svc, r.branch, tmp_path, "a.txt")
+    assert svc.publish(r.id) == first
+    second = _push_more(svc, r.branch, tmp_path, "b.txt")
+    assert svc.publish(r.id) == second
+    assert svc.get(r.id).published_oid == second
 
 
 def test_publish_lease_conflict(svc: WorkspaceService, tmp_path: Path):

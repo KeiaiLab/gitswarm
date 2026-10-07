@@ -82,7 +82,8 @@ gitswarm/
   "base_ref": "refs/heads/main", "base_oid": "<40hex>",
   "branch": "refs/heads/gitswarm/ws/01J9…",
   "agent": {"name": "implementer", "run": "…"}, "parent": null,
-  "created_at": "2026-10-06T00:00:00Z", "ttl_s": 7200, "labels": {} }
+  "created_at": "2026-10-06T00:00:00Z", "ttl_s": 7200, "labels": {},
+  "published_oid": null }
 ```
 
 상태 전이: `open → published → dropped`, `open → dropped`. 같은 상태로의 재전이(`published`
@@ -94,7 +95,7 @@ gitswarm/
 | `ws create --base <ref> [--agent] [--ttl] [--from-ws <id>] [--checkout]` | base oid 고정 → 브랜치 생성(from-ws 면 그 브랜치 tip 에서, parent 기록) → 원격 push → meta 기록. `--checkout` 이면 worktree 경로 반환 | 아니오(id 새로) |
 | `ws get <id>` · `ws list [--state]` | meta 조회. list 는 `{workspaces, invalid:[{id, detail}]}` — 깨진 레코드는 건너뛰고 보고한다 | 예 |
 | `ws read <id> <path>` · `ws tree <id> [path]` | 체크아웃 없이 블롭·트리 읽기 | 예 |
-| `ws publish <id>` | worktree 의 커밋을 원격 브랜치로 push(lease 기준 = §4.1 전용 ref), state=published | 예 |
+| `ws publish <id>` | 원격 브랜치 tip 을 `published_oid` 로 기록, state=published. worktree 가 있으면 HEAD 를 먼저 push(lease 기준 = §4.1 전용 ref); 없으면 다른 호스트가 push 한 tip 을 기록(tip == base 면 InvalidState, 브랜치 없으면 NotFound) | 예 |
 | `ws drop <id>` | 원격·로컬 브랜치, worktree 삭제, state=dropped, 토큰 revoke | 예 |
 | `ws gc` | `created_at + ttl_s < now` 인 open 을 drop. `{expired, invalid}` 반환 | 예 |
 

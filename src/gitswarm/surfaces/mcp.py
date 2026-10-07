@@ -107,7 +107,7 @@ def workspace_tree(remote: str, ws_id: str, path: str = "") -> dict:
 @mcp.tool
 @payload
 def workspace_publish(remote: str, ws_id: str) -> dict:
-    """로컬 worktree 의 커밋을 원격 workspace 브랜치로 push 한다. Returns {ok, id, oid}. On failure returns {ok: false, error: {kind, detail}}."""
+    """workspace 의 원격 브랜치 tip 을 발행 결과로 기록한다. 로컬 worktree 가 있으면 그 커밋을 먼저 push 하고, 없으면 다른 호스트가 push 한 tip 을 기록한다(base 그대로면 InvalidState). Returns {ok, id, oid} — oid = 기록한 tip. On failure returns {ok: false, error: {kind, detail}}."""
     return {"id": ws_id, "oid": _svc(remote).publish(ws_id)}
 
 

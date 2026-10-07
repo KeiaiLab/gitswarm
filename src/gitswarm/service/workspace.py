@@ -11,7 +11,7 @@ import json
 import re
 import sys
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -50,7 +50,7 @@ EV_DROPPED = "ws.dropped"
 EV_EXPIRED = "ws.expired"
 
 REQUIRED_STR_FIELDS = ("id", "base_ref", "base_oid", "branch")
-OPTIONAL_STR_FIELDS = ("parent", "token_id")
+OPTIONAL_STR_FIELDS = ("parent", "token_id", "published_oid")
 
 
 class WsState(StrEnum):
@@ -144,6 +144,7 @@ class Workspace:
     ttl_s: int = TTL_FOREVER
     labels: dict = field(default_factory=dict)
     token_id: str | None = None
+    published_oid: str | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -175,6 +176,8 @@ class Workspace:
             raise InvalidState(f"{ws.id}: invalid parent {ws.parent!r}")
         if ws.token_id is not None and not TOKEN_ID_RE.fullmatch(ws.token_id):
             raise InvalidState(f"{ws.id}: invalid token id {ws.token_id!r}")
+        if ws.published_oid is not None and not OID_RE.fullmatch(ws.published_oid):
+            raise InvalidState(f"malformed workspace record: published_oid {ws.published_oid!r}")
         _check_expiry(ws)
         return ws
 
@@ -500,24 +503,37 @@ class WorkspaceService:
 
     # ── 발행 ──────────────────────────────────────────────────
     def publish(self, ws_id: str) -> str:
+        """원격 브랜치 tip 을 발행 결과로 기록한다. worktree 가 있으면 HEAD 를 먼저 push 한다."""
         ws = self.get(ws_id).with_state(WsState.PUBLISHED)
         wt = self.hive.worktree_dir(ws_id)
-        if not wt.exists():
-            raise InvalidState(f"{ws_id} has no local worktree; push the branch with git instead")
+        oid = self._push_head(ws, wt) if wt.exists() else self._remote_tip(ws)
 
+        self._transition(
+            ws_id,
+            EV_PUBLISHED,
+            lambda cur: replace(cur.with_state(WsState.PUBLISHED), published_oid=oid),
+        )
+        return oid
+
+    def _push_head(self, ws: Workspace, wt: Path) -> str:
         head = Git(wt).rev_parse("HEAD")
         if head is None:
-            raise InvalidState(f"{ws_id} worktree has no HEAD")
+            raise InvalidState(f"{ws.id} worktree has no HEAD")
 
         if not self._push_leased(head, ws.branch):
             raise Conflict(
                 f"{ws.branch} moved on remote; run "
-                f"`git pull --rebase origin {ws_branch(ws_id)}` in the worktree"
+                f"`git pull --rebase origin {ws_branch(ws.id)}` in the worktree"
             )
         self.hive.git.update_ref(lease_ref(ws.branch), head)
-
-        self._transition(ws_id, EV_PUBLISHED, lambda cur: cur.with_state(WsState.PUBLISHED))
         return head
+
+    def _remote_tip(self, ws: Workspace) -> str:
+        """worktree 없는 workspace — 다른 호스트가 push 한 원격 tip. base 그대로면 발행할 것이 없다."""
+        oid = self._published_rev(ws)
+        if oid == ws.base_oid:
+            raise InvalidState("nothing published: branch is still at base")
+        return oid
 
     def _seen(self, branch: str) -> str | None:
         """이 호스트가 마지막으로 확인한 원격 oid. lease ref 가 없으면(남이 만든 것) tracking."""

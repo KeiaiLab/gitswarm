@@ -210,6 +210,21 @@ def test_forged_token_id_fails_closed(svc: WorkspaceService):
         svc.get(FORGED_ID)
 
 
+@pytest.mark.parametrize("bad", ["zz", "A" * 40, 7, ""])
+def test_forged_published_oid_fails_closed(svc: WorkspaceService, bad: object):
+    ws = Workspace(
+        id=FORGED_ID,
+        state=WsState.PUBLISHED,
+        base_ref="refs/heads/main",
+        base_oid="0" * 40,
+        branch=ws_ref(FORGED_ID),
+    )
+    body = json.dumps({**ws.to_dict(), "published_oid": bad}).encode()
+    svc.store.apply(Change(meta_path(FORGED_ID), lambda _: body, f"ws.created {FORGED_ID}"))
+    with pytest.raises(InvalidState):
+        svc.get(FORGED_ID)
+
+
 def test_from_json_ignores_unknown_keys():
     ws = Workspace(
         id=FORGED_ID,
