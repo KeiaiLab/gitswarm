@@ -1,0 +1,55 @@
+# CI 게이트 템플릿 — fleet 배포 SSOT(본 repo `.forgejo/fleet/ci.yml`, 목록 `repos.txt`).
+# land.yml@9fc9e63a^ 의 test 단계에서 옮김 — 착지는 land-direct 가 대신하므로 land 잡은
+# 뺀다(RFC-0152 후속). 빈 push(base 와 같은 sha) no-op 분기도 지운다 — PR 경로가 은퇴해
+# INC-121 의 거짓 붉음 근거가 사라졌다: stable sha 의 붉음은 이제 참 신호다.
+# 러너 계약: runs-on: host = Alpine/BusyBox — git/wget/tar 만 보장(curl·jq·python3 없음).
+# 이미지는 굽지 않는다 — 빌드는 이 맥(로컬)에서 image-ship 이 한다.
+name: ci
+"on":
+  push:
+    branches-ignore:
+      - stable
+  workflow_dispatch: {}
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: host
+    steps:
+      - name: base 머지 → 은퇴 시스템 재도입 차단 → .forgejo/ci/verify.sh
+        env:
+          BASE: ${{ github.event.repository.default_branch }}
+          # 사설 git 의존(uv lock 핀 등)을 verify.sh 가 fetch 할 때 쓰는 org-read PAT —
+          # 러너 task token(GITHUB_TOKEN)은 cross-repo private read 를 거부한다.
+          GIT_DEPS_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
+        run: |
+          set -eu
+          WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+          git clone --quiet --branch "$BASE" "https://x-access-token:${GITHUB_TOKEN}@git.keiailab.com/${GITHUB_REPOSITORY}.git" "$WORK/src"
+          cd "$WORK/src"
+          git fetch --quiet origin "$GITHUB_REF_NAME"
+          [ "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA" ] || { echo "::error::브랜치가 $GITHUB_SHA 를 지나쳤다 — 이 run 은 새 push 로 대체됨"; exit 1; }
+          # base 와 같은 sha 면 머지할 것이 없다 — 건너뛰고 검증은 그대로 돈다(빈 push no-op 폐지, INC-121).
+          if [ "$(git rev-parse FETCH_HEAD)" = "$(git rev-parse HEAD)" ]; then
+            echo "::notice::$BASE 와 동일 — 머지 생략"
+          else
+            git -c user.name=ci -c user.email=ci@keiailab.com merge --quiet --no-edit --no-ff FETCH_HEAD
+          fi
+          # 은퇴 시스템 재도입 차단 — 추가된 줄만 검사. 탐지기/문서 파일은 pathspec 완전일치로 제외.
+          RETIRED='gitlab|registry\.keiailab\.com|keiailab\.synology\.me'
+          EXCL=':!.forgejo/workflows/ci.yml :!.forgejo/fleet/ci.yml :!src/keiailab_scheduler/jobs/retired_systems_audit.py :!src/keiailab_scheduler/jobs/workflow_sync.py :!tests/test_retired_systems_audit.py :!tests/test_sync_payload_guard.py :!tests/test_workflow_sync.py :!test/retired-systems.test.ts :!tests/deployment-structure.test.ts :!automation/apps/api/tests/test_monorepo_ci_contract.py :!cloudflared/gateway-migration-hosts.json :!app/core/redact.py :!seed/skills/keiailab-legacy-purge-discipline.md :!seed/skills/keiailab-automerge-pr-anomalies.md :!seed/skills/keiailab-cnp-apply.md :!seed/skills/keiailab-com-httproute-deploy.md :!seed/skills/keiailab-mcp-dcr-client-not-found.md'
+          case "$GITHUB_REPOSITORY" in
+            keiailab-services/chocomics)
+              # 예외 만료 2026-11-20 (발급 2026-08-25) — 만료 후 자동 소멸(수치 비교, BusyBox 안전).
+              [ "$(date -u +%Y%m%d)" -lt 20261120 ] && EXCL="$EXCL :!backend/src/chocomics/admin/ :!backend/tests/integration/test_admin_*" ;;
+          esac
+          HITS=$(git diff -U0 "origin/$BASE" HEAD -- . $EXCL | grep '^+' | grep -v '^+++' | grep -iE "$RETIRED" || true)
+          [ -z "$HITS" ] || { echo "::error::은퇴 시스템 재도입(추가 줄) — 현행: git.keiailab.com / harbor.keiailab.com"; printf '%s\n' "$HITS"; exit 1; }
+          # 리포 고유 검증 — 부재는 RED(RFC-0152 D2: 차단하지 않는 게이트 금지).
+          if [ -f .forgejo/ci/verify.sh ]; then
+            sh .forgejo/ci/verify.sh
+          else
+            echo "::error::.forgejo/ci/verify.sh 없음 — 리포 검증을 이관해야 CI 가 초록일 수 있다"
+            exit 1
+          fi
