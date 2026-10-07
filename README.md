@@ -10,14 +10,22 @@ workspace 를 만들고, 체크아웃 없이 읽고, 발행하고, 거둔다. �
 
 ## 30초
 
-    gitswarm hive init ssh://git@host/org/repo.git
-    export GITSWARM_REMOTE=ssh://git@host/org/repo.git
-    gitswarm ws create --base main --agent impl --checkout
-    #  → {"ok": true, "id": "01J…", "branch": "refs/heads/gitswarm/ws/01J…", "path": "…/wt/01J…", …}
+    cd repo                                 # origin 이 있는 클론 안이면 원격을 찾는다
+    # export GITSWARM_REMOTE=ssh://git@host/org/repo.git   # 레포 밖이면 이것(또는 --remote)
+    gitswarm ws create --agent impl --checkout             # --base 기본 = 원격 HEAD
+    #  → {"ok": true, "id": "01J…", "branch_name": "gitswarm/ws/01J…", "path": "…/wt/01J…",
+    #     "clone": "git clone -b gitswarm/ws/01J… ssh://…", "remote": "ssh://…", …}
+    gitswarm ws tree 01J… [path]
     gitswarm ws read 01J… README.md
     gitswarm ws publish 01J…
     gitswarm ws drop 01J…
     gitswarm events tail
+    gitswarm doctor                         # git·홈·설정·원격·hive 점검, 실패 시 종료코드 1
+    gitswarm stats                          # 이벤트 종류별·상태별 수, 가장 오래 열린 workspace 나이
+
+원격은 `--remote` → `$GITSWARM_REMOTE` → cwd(hive worktree 면 그 hive, git 레포면 origin) 순으로
+정한다. 성공 출력의 `remote` 가 실제로 쓴 원격이다. hive 는 첫 ws 명령이 만든다(`hive init` 은
+미리 만들 때만).
 
 `--help` 를 뺀 모든 명령의 출력은 JSON 한 줄. 오류는 `{"ok": false, "error": {"kind", "detail"}}` + 종료코드
 (NotFound 2 · Conflict 3 · InvalidState 4 · Unsupported 5 · RemoteError 6).
@@ -32,14 +40,15 @@ gc 가 건너뛴 workspace 다 — 둘 다 보고만 하며, `ws drop <id>` 로 
 
     claude mcp add gitswarm -- uvx gitswarm mcp
 
-도구: `hive_init` · `workspace_create/get/list/read_file/tree/publish/drop/gc` · `events_tail`.
-MCP 도구는 원격을 호출마다 `remote` 인자로 받는다(`GITSWARM_REMOTE` 는 CLI 전용).
+도구: `hive_init` · `workspace_create/get/list/read_file/tree/publish/drop/gc` · `events_tail` ·
+`doctor` · `stats`. `remote` 인자는 선택이다 — 없으면 서버 프로세스의 cwd 로 찾는다
+(`GITSWARM_REMOTE` 는 CLI 전용).
 
 ## 다른 호스트의 에이전트
 
 worktree 없이 브랜치만 받은 에이전트는 평범한 git 으로 일한다:
 
-    git clone -b gitswarm/ws/01J… ssh://git@host/org/repo.git
+    git clone -b gitswarm/ws/01J… ssh://git@host/org/repo.git   # = ws create 결과의 "clone"
     … commit …
     git push origin HEAD
     gitswarm ws publish 01J…   # records the remote tip as published
