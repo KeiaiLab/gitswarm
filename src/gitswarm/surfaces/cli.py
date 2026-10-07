@@ -168,15 +168,17 @@ def mcp_serve() -> None:
 
 def main() -> None:
     try:
-        app(standalone_mode=False)
+        rc = app(standalone_mode=False)
     except click_exc.UsageError as e:
         typer.echo(json.dumps(_usage_payload(e.format_message()), ensure_ascii=False))
         sys.exit(EXIT_USAGE)
-    except click_exc.Exit as e:
+    except typer.Exit as e:
         sys.exit(e.exit_code)
-    except click_exc.Abort:
+    except typer.Abort:
         typer.echo(json.dumps(_usage_payload("aborted")))
         sys.exit(EXIT_USAGE)
+
+    sys.exit(rc if isinstance(rc, int) else 0)
 
 
 if __name__ == "__main__":

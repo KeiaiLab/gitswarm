@@ -128,3 +128,26 @@ def test_usage_errors_are_one_json_line(monkeypatch, capsys, argv):
 def test_help_exits_zero(monkeypatch, capsys):
     code, _ = main_cli(monkeypatch, capsys, "--help")
     assert code == 0
+
+
+def test_main_propagates_notfound_exit_code(monkeypatch, capsys, remote_url: str, home: Path):
+    argv = ("ws", "list", "--remote", remote_url)
+    monkeypatch.setattr(sys, "argv", ["gitswarm", *argv])
+    code = 0
+    try:
+        main()
+    except SystemExit as exc:
+        code = int(exc.code or 0)
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert code == 2 and len(lines) == 1
+    assert json.loads(lines[0])["error"]["kind"] == "NotFound"
+
+
+def test_main_success_exits_zero(monkeypatch, capsys, remote_url: str, home: Path):
+    monkeypatch.setattr(sys, "argv", ["gitswarm", "hive", "init", remote_url])
+    try:
+        main()
+    except SystemExit as exc:
+        assert not exc.code
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["ok"] is True
