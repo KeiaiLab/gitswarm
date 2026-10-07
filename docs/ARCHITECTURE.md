@@ -399,8 +399,8 @@ git does not have.
 - MCP returns the same dicts; failures are payloads, not exceptions.
 - `ws read` returns `content` (UTF-8) or `content_b64` (binary).
 - Ambiguity is an error. No path guesses and continues.
-- `--remote` or `GITSWARM_REMOTE` selects the remote; `hive init` must run
-  first (`NotFound` otherwise).
+- The remote is `--remote`, else `GITSWARM_REMOTE`, else found from the
+  cwd; with none, `Usage`. ws commands create the hive when it is missing.
 - `create` returns the PAT once in `token`; it is not stored in meta (only
   `token_id` is).
 
@@ -411,8 +411,8 @@ git does not have.
   where timing would be flaky.
 - `pre-receive` hooks cover the "hook decline stays a hard error" case.
 - CLI: typer `CliRunner` and direct `main()` calls. MCP: in-process fastmcp
-  client. Forgejo: `respx`.
-- Gates: `pytest --cov` with `fail_under = 100`, ruff, vulture. 253 tests at
+  client. Forgejo and GitHub: `respx`.
+- Gates: `pytest --cov` with `fail_under = 100`, ruff, vulture. 506 tests at
   the time of writing.
 - Not tested: a real two-host race over a network. It is simulated by
   forcing the interleaving of two writers against one remote; the CAS
@@ -438,14 +438,4 @@ B and C are separate designs and are not implemented.
 
 ## Spec and code differences
 
-Checked against the spec amended for `published_oid` and the round-trip
-sentence.
-
-- spec section 1: `build.yml`; code: `.forgejo/workflows/ci.yml` + `.forgejo/ci/verify.sh`.
-- spec section 1 layout omits `adapters/github.py`, `adapters/select.py`; section 10 lists the GitHub adapter as out of scope while section 5 specifies it.
-- spec section 3 record: no `token_id`; code stores it.
-- spec section 3 gc: `{expired, invalid}`; code adds `conflicted`.
-- spec section 4 drop: lease on the last seen oid; code adds `LeaseMode` FOLLOW (explicit drop) vs STRICT (gc).
-- spec section 4.1/4.2: lease ref `refs/gitswarm/lease/<id>`, peek ref `<short>`; code uses the full ref name under each prefix.
-- spec section 5: `capabilities() -> set`, `issue_token(ws, scope)`, `revoke_token(token)`; code: `frozenset`, `issue_token(repo, ws_id, scope)`, `revoke_token(token_id: str)`.
-- spec section 7: no `Usage` kind; code has it (exit 1, surfaces only).
+Checked against the spec realigned on 2026-10-07: none.
