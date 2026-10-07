@@ -48,7 +48,7 @@ def payload(fn):
 @mcp.tool
 @payload
 def hive_init(url: str) -> dict:
-    """원격 하나에 대한 로컬 hive(bare 미러)를 만든다. 멱등. Returns {ok, url, path}. On failure returns {ok: false, error: {kind, detail}}."""
+    """Create the local hive (bare mirror) for a remote. Idempotent. Returns {ok, url, path}. On failure returns {ok: false, error: {kind, detail}}."""
     hive = Hive.init(url, resolve_home())
     return {"url": hive.url, "path": str(hive.path)}
 
@@ -65,11 +65,12 @@ def workspace_create(
     checkout: bool = False,
     labels: dict[str, str] | None = None,
 ) -> dict:
-    """base 에서 격리 workspace 브랜치를 만든다. checkout=True 면 로컬 worktree 경로도 준다.
+    """Create an isolated workspace branch from a base. Creates the hive if missing.
 
-    base_ref 를 생략하면 원격 HEAD 가 가리키는 브랜치다. hive 가 없으면 먼저 만든다(멱등).
-    ttl_s 는 초 단위(0 = 만료 없음). Returns {ok, id, branch, branch_name, base_oid, path, token, clone, remote}
-    (path 은 checkout=True 일 때만). On failure returns {ok: false, error: {kind, detail}}.
+    base_ref defaults to the remote HEAD. checkout=True also adds a local worktree and
+    returns its path. ttl_s: seconds until gc may drop it (0 = never). from_ws forks from
+    that workspace's branch tip. Returns {ok, id, branch, branch_name, base_oid, path, token,
+    clone, remote} (path is null unless checkout=True; token is null without a token adapter). On failure returns {ok: false, error: {kind, detail}}.
     """
     agent = agent_dict(agent_name, agent_run)
     mode = Checkout.WORKTREE if checkout else Checkout.NONE
@@ -82,7 +83,7 @@ def workspace_create(
 @mcp.tool
 @payload
 def workspace_get(ws_id: str, remote: str | None = None) -> dict:
-    """workspace 메타를 읽는다. Returns {ok, id, branch, state, agent, parent, labels, ..., remote}. On failure returns {ok: false, error: {kind, detail}}."""
+    """Show a workspace record. Returns {ok, id, branch, state, agent, parent, labels, ..., remote}. On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, svc.get(ws_id).to_dict())
 
@@ -90,7 +91,7 @@ def workspace_get(ws_id: str, remote: str | None = None) -> dict:
 @mcp.tool
 @payload
 def workspace_list(remote: str | None = None, state: str | None = None) -> dict:
-    """workspace 목록. state = open|published|dropped. Returns {ok, workspaces: [meta, ...], invalid: [{id, detail}, ...], remote} (invalid = 읽을 수 없는 레코드, workspace_drop 으로 거둔다). On failure returns {ok: false, error: {kind, detail}}."""
+    """List workspaces. state = open|published|dropped. Returns {ok, workspaces: [record, ...], invalid: [{id, detail}, ...], remote} (invalid = unreadable records; reclaim with workspace_drop). On failure returns {ok: false, error: {kind, detail}}."""
     flt = parse_state(state)
     svc = service(remote)
     good, invalid = svc.list_report(flt)
@@ -100,9 +101,9 @@ def workspace_list(remote: str | None = None, state: str | None = None) -> dict:
 @mcp.tool
 @payload
 def workspace_read_file(ws_id: str, path: str, remote: str | None = None) -> dict:
-    """체크아웃 없이 발행된 파일을 읽는다.
+    """Read a file at the workspace's remote branch tip, without a checkout.
 
-    Returns {ok, path, content, remote} (UTF-8 텍스트) 또는 {ok, path, content_b64, remote} (이진). On failure returns {ok: false, error: {kind, detail}}.
+    Returns {ok, path, content, remote} (UTF-8 text) or {ok, path, content_b64, remote} (binary). On failure returns {ok: false, error: {kind, detail}}.
     """
     svc = service(remote)
     return with_remote(svc, read_payload(path, svc.read(ws_id, path)))
@@ -111,7 +112,7 @@ def workspace_read_file(ws_id: str, path: str, remote: str | None = None) -> dic
 @mcp.tool
 @payload
 def workspace_tree(ws_id: str, path: str = "", remote: str | None = None) -> dict:
-    """디렉터리 한 단계를 나열한다. Returns {ok, path, entries, remote}. On failure returns {ok: false, error: {kind, detail}}."""
+    """List one directory level at the workspace's remote branch tip (path "" = root). Returns {ok, path, entries: [{name, kind, oid}], remote}. On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, {"path": path, "entries": svc.tree(ws_id, path)})
 
@@ -119,7 +120,7 @@ def workspace_tree(ws_id: str, path: str = "", remote: str | None = None) -> dic
 @mcp.tool
 @payload
 def workspace_publish(ws_id: str, remote: str | None = None) -> dict:
-    """workspace 의 원격 브랜치 tip 을 발행 결과로 기록한다. 로컬 worktree 가 있으면 그 커밋을 먼저 push 하고, 없으면 다른 호스트가 push 한 tip 을 기록한다(base 그대로면 InvalidState). Returns {ok, id, oid, remote} — oid = 기록한 tip. On failure returns {ok: false, error: {kind, detail}}."""
+    """Record the branch tip as published. Pushes the local worktree first if there is one; otherwise records the tip another host pushed (InvalidState if it is still at base). Returns {ok, id, oid, remote}; oid = the recorded tip. On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, {"id": ws_id, "oid": svc.publish(ws_id)})
 
@@ -127,7 +128,7 @@ def workspace_publish(ws_id: str, remote: str | None = None) -> dict:
 @mcp.tool
 @payload
 def workspace_drop(ws_id: str, remote: str | None = None) -> dict:
-    """브랜치·worktree·토큰을 거두고 dropped 로 표시한다. 멱등. Returns {ok, id, state, ..., remote}. On failure returns {ok: false, error: {kind, detail}}."""
+    """Delete the branch, worktree and token; mark dropped. Idempotent. Returns {ok, id, state, ..., remote}. On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, svc.drop(ws_id).to_dict())
 
@@ -135,7 +136,7 @@ def workspace_drop(ws_id: str, remote: str | None = None) -> dict:
 @mcp.tool
 @payload
 def workspace_gc(remote: str | None = None) -> dict:
-    """ttl 이 지난 open workspace 를 drop 한다. Returns {ok, expired: [ws id, ...], invalid: [{id, detail}, ...], conflicted: [ws id, ...], remote} (invalid = 건너뛴 망가진 레코드, conflicted = 본 뒤 남이 push 해 건너뛴 브랜치; 둘 다 workspace_drop 으로 거둔다). On failure returns {ok: false, error: {kind, detail}}."""
+    """Drop open workspaces past their ttl. Returns {ok, expired: [ws id, ...], invalid: [{id, detail}, ...], conflicted: [ws id, ...], remote} (invalid = skipped unreadable records; conflicted = skipped because someone pushed after this host last saw the branch; reclaim both with workspace_drop). On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, svc.gc())
 
@@ -143,7 +144,7 @@ def workspace_gc(remote: str | None = None) -> dict:
 @mcp.tool
 @payload
 def events_tail(remote: str | None = None, since: str | None = None) -> dict:
-    """meta 로그를 이벤트로 돌려준다(최신순). since = 마지막으로 본 oid. Returns {ok, events: [...], remote}. On failure returns {ok: false, error: {kind, detail}}."""
+    """Events from the meta log, newest first. since = only events after this meta oid. Returns {ok, events: [{kind, id, oid, at, payload}], remote}. On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, {"events": [e.to_dict() for e in svc.events(since)]})
 
@@ -151,14 +152,14 @@ def events_tail(remote: str | None = None, since: str | None = None) -> dict:
 @mcp.tool
 @payload
 def doctor(remote: str | None = None) -> dict:
-    """git 판본·GITSWARM_HOME·config·원격 도달·hive·미회수 토큰(tokens)·ssh 다중화를 점검한다. Returns {ok, checks: [{name, ok, detail}], remote?} — ok=false 면 실패한 check 의 detail 을 본다. remote 를 못 찾으면 원격 검사는 생략."""
+    """Check git, home, config, remote, hive, unrevoked tokens and ssh multiplexing. Returns {ok, checks: [{name, ok, detail}], remote?}; ok=false means a check failed, see its detail. Remote checks are skipped when no remote is given or found."""
     return doctor_report(remote)
 
 
 @mcp.tool
 @payload
 def stats(remote: str | None = None) -> dict:
-    """이벤트 로그 집계. Returns {ok, by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens, remote} (open 이 없으면 open_oldest_age_s=null). On failure returns {ok: false, error: {kind, detail}}."""
+    """Counts by event kind and state, age of the oldest open workspace. Returns {ok, by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens, remote} (open_oldest_age_s is null with no open workspace). On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, summarize(svc))
 

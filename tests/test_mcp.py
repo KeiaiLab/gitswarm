@@ -240,3 +240,12 @@ def test_mcp_refuses_option_shaped_remote(tmp_path: Path, home: Path):
         assert out["ok"] is False and out["error"]["kind"] == "InvalidState", name
     assert call("hive_init", url=poc)["error"]["kind"] == "InvalidState"
     assert not pwned.exists()
+
+
+def test_tool_descriptions_are_english():
+    async def go():
+        async with Client(mcp) as c:
+            return {t.name: t.description or "" for t in await c.list_tools()}
+
+    bad = [name for name, text in asyncio.run(go()).items() if not text or not text.isascii()]
+    assert bad == []
