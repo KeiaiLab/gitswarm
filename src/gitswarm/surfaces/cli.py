@@ -1,4 +1,4 @@
-"""CLI. 출력은 항상 JSON 한 줄 — 에이전트·CI 가 파싱한다. service 만 부른다."""
+"""CLI. 출력은 JSON 한 줄(--help 제외) — 에이전트·CI 가 파싱한다. service 만 부른다."""
 
 from __future__ import annotations
 
@@ -162,7 +162,7 @@ def events_tail(
 # ── mcp ──────────────────────────────────────────────────────
 @app.command("mcp")
 def mcp_serve() -> None:
-    """stdio MCP 서버를 띄운다(Task 9)."""
+    """stdio MCP 서버를 띄운다."""
     from gitswarm.surfaces.mcp import serve
 
     serve()

@@ -19,15 +19,20 @@ workspace 를 만들고, 체크아웃 없이 읽고, 발행하고, 거둔다. �
     gitswarm ws drop 01J…
     gitswarm events tail
 
-모든 출력은 JSON 한 줄. 오류는 `{"ok": false, "error": {"kind", "detail"}}` + 종료코드
+`--help` 를 뺀 모든 명령의 출력은 JSON 한 줄. 오류는 `{"ok": false, "error": {"kind", "detail"}}` + 종료코드
 (NotFound 2 · Conflict 3 · InvalidState 4 · Unsupported 5 · RemoteError 6).
 사용법 오류는 `{"ok": false, "error": {"kind": "Usage", …}}` + 종료코드 1.
+
+`ws list` 는 `{"workspaces": […], "invalid": [{"id", "detail"}]}`, `ws gc` 는
+`{"expired": [id…], "invalid": [{"id", "detail"}]}` 를 낸다. `invalid` 는 읽을 수 없는
+meta 레코드다 — 목록·회수를 멈추지 않고 보고만 하며, `ws drop <id>` 로 거둔다.
 
 ## Claude Code 에 MCP 로 붙이기
 
     claude mcp add gitswarm -- uvx gitswarm mcp
 
 도구: `hive_init` · `workspace_create/get/list/read_file/tree/publish/drop/gc` · `events_tail`.
+MCP 도구는 원격을 호출마다 `remote` 인자로 받는다(`GITSWARM_REMOTE` 는 CLI 전용).
 
 ## 다른 호스트의 에이전트
 
@@ -59,6 +64,10 @@ worktree 없이 브랜치만 받은 에이전트는 평범한 git 으로 일한�
     refs/heads/gitswarm/ws/<id>     workspace 브랜치
 
 쓰기는 `push --force-with-lease` 하나로 CAS. 설계: `docs/superpowers/specs/`.
+
+`ws publish` 의 lease 기준은 로컬 `refs/gitswarm/lease/…` 다 — worktree 에서 `git fetch`
+해도 옮겨지지 않는다. 남이 먼저 push 했으면 Conflict 이고, `git pull --rebase origin
+gitswarm/ws/<id>` 뒤 다시 publish 하면 된다.
 
 ## 권한 경계
 

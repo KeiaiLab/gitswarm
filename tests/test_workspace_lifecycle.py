@@ -346,3 +346,28 @@ def test_malformed_record_does_not_halt_list_gc_drop(svc: WorkspaceService):
     assert svc.hive.git.ls_remote(bad.branch) is None
     assert not Path(bad.path).exists()
     assert svc.get(good.id).state is WsState.OPEN
+
+
+class LostCapabilityAdapter(TokenAdapter):
+    """설정이 바뀌어 TOKEN 을 더는 광고하지 않지만 revoke 는 할 수 있다."""
+
+    def capabilities(self) -> frozenset[Capability]:
+        return frozenset()
+
+
+def test_drop_revokes_even_without_token_capability(remote_url: str, home: Path, capsys):
+    hive = Hive.init(remote_url, home)
+    svc = WorkspaceService(hive, MetaStore(hive.git), TokenAdapter())
+    a = svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
+    b = svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
+
+    lost = LostCapabilityAdapter()
+    svc.adapter = lost
+    svc.drop(a.id)
+    assert lost.revoked == ["42"]
+
+    # revoke 를 아예 못 하는 어댑터면 drop 은 끝나고 한 줄 남긴다
+    svc.adapter = PlainAdapter()
+    assert svc.drop(b.id).state is WsState.DROPPED
+    err = capsys.readouterr().err.strip().splitlines()
+    assert len(err) == 1 and "not revoked" in err[0]

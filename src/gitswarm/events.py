@@ -1,5 +1,8 @@
 # src/gitswarm/events.py
-"""이벤트 = meta 커밋 1개. sink 는 발행 시점 1회 전송(재시도 없음, 되감기는 tail --since)."""
+"""이벤트 = meta 커밋 1개. sink 는 발행 시점 1회 전송(재시도 없음, 되감기는 tail --since).
+
+`at`: sink 로 보낼 때는 발행 호스트의 벽시계, `events tail` 은 meta 커밋의 커미터 시각.
+"""
 
 from __future__ import annotations
 
