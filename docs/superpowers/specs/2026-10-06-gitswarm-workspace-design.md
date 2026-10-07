@@ -105,22 +105,25 @@ gitswarm/
 
 ## 4. 동시성 — CAS 로만 쓴다
 
-meta 쓰기 = `(경로, 새 내용)` 한 쌍의 **재적용 가능한 변경**.
+meta 쓰기 = `(경로, 새 내용)` 한 쌍의 **재적용 가능한 변경**. CAS 는 원격 push 의
+`--force-with-lease` 하나다. 로컬 `refs/heads/gitswarm/meta` 는 두지 않는다 — 로컬 bare 에는
+`refs/remotes/origin/gitswarm/meta`(원격 캐시)만 있고, 새 커밋은 oid 로 직접 push 한다.
 
 ```
 loop ≤ META_CAS_RETRIES(5):
-  old  = tip(meta)
+  old  = fetch origin meta → refs/remotes/origin/gitswarm/meta 의 oid (없으면 빈 값)
   tree = old.tree + 변경
   new  = commit-tree(tree, parent=old, msg="<종류> <id>")
-  git update-ref refs/heads/gitswarm/meta new old      ← 실패면 continue
-  git push --force-with-lease=refs/heads/gitswarm/meta:old
-                                                      ← 거절이면 fetch 뒤 continue
+  git push origin new:refs/heads/gitswarm/meta --force-with-lease=refs/heads/gitswarm/meta:old
+                                                      ← 거절이면 continue
   return
 raise Conflict
 ```
 
-잠금 파일·데몬 없음. 쓰기 주체가 몇이든 git ref 원자성에만 기댄다. 첫 meta 커밋은
-부모 없는 고아 커밋이며 원격에 아직 없으면 `old` 가 빈 값인 CAS 로 만든다.
+잠금 파일·데몬 없음. 쓰기 주체가 몇이든(같은 호스트의 두 프로세스든 다른 호스트든) 원격
+ref 의 lease 하나에만 기댄다. 첫 meta 커밋은 부모 없는 고아 커밋이며 `old` 가 빈 값인
+lease(= "그 ref 가 없어야 한다")로 만든다. 같은 호스트 두 프로세스가 로컬 ref 를 서로
+덮어쓰는 경합은 로컬 ref 를 쓰지 않으므로 생기지 않는다.
 
 ## 5. 원격 어댑터와 토큰
 
