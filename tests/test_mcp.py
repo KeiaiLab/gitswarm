@@ -5,7 +5,7 @@ from pathlib import Path
 from fastmcp import Client
 
 from gitswarm.surfaces.mcp import mcp
-from tests.conftest import git
+from tests.conftest import git, real_help
 
 
 def commit(wt: Path) -> None:
@@ -247,7 +247,7 @@ def test_tool_descriptions_are_english():
         async with Client(mcp) as c:
             return {t.name: t.description or "" for t in await c.list_tools()}
 
-    bad = [name for name, text in asyncio.run(go()).items() if not text or not text.isascii()]
+    bad = [name for name, text in asyncio.run(go()).items() if not real_help(text)]
     assert bad == []
 
 

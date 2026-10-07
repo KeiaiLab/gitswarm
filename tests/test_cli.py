@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from gitswarm.surfaces import cli
 from gitswarm.surfaces.cli import app, main
-from tests.conftest import git
+from tests.conftest import git, real_help
 
 runner = CliRunner()
 
@@ -417,16 +417,32 @@ def _walk(cmd, path=()):
         yield from _walk(sub, (*path, name))
 
 
+@pytest.mark.parametrize(
+    "text,ok",
+    [
+        (None, False),
+        ("", False),
+        ("한국어 도움말 문장", False),
+        ("TODO fill this in", False),
+        ("tbd later on", False),
+        ("Fixme: later on", False),
+        ("Two words", False),
+        ("Workspace id (ULID).", True),
+    ],
+)
+def test_real_help(text, ok):
+    assert real_help(text) is ok
+
+
 def test_every_command_and_parameter_has_english_help():
-    # --help 는 사람이 처음 보는 문서다 — 빈 칸·한국어가 있으면 안 된다
+    # --help 는 사람이 처음 보는 문서다 — 빈 칸·한국어·자리표시가 있으면 안 된다
     root = typer.main.get_command(app)
     missing = []
     for path, cmd in _walk(root):
-        if not (cmd.help or "").isascii() or not cmd.help:
+        if not real_help(cmd.help):
             missing.append(" ".join(path) or "gitswarm")
         for p in cmd.params:
-            text = getattr(p, "help", None)
-            if p.name != "help" and (not text or not text.isascii()):
+            if p.name != "help" and not real_help(getattr(p, "help", None)):
                 missing.append(f"{' '.join(path)} {p.name}")
     assert missing == []
 

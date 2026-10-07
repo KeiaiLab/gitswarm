@@ -87,3 +87,16 @@ def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GITSWARM_REMOTE", raising=False)
     monkeypatch.setenv("GITSWARM_HOME", str(tmp_path / "default-home"))
+
+
+PLACEHOLDERS = ("TODO", "TBD", "FIXME")
+MIN_HELP_WORDS = 3
+
+
+def real_help(text: str | None) -> bool:
+    """영어(ASCII)·자리표시 없음·세 단어 이상."""
+    if not text or not text.isascii():
+        return False
+    if any(mark in text.upper() for mark in PLACEHOLDERS):
+        return False
+    return len(text.split()) >= MIN_HELP_WORDS
