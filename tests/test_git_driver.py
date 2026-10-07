@@ -563,3 +563,35 @@ def test_ssh_command_keeps_connections_alive(tmp_path: Path, monkeypatch: pytest
         f"ConnectTimeout={SSH_CONNECT_TIMEOUT_S}",
     ):
         assert opt in opts
+
+
+def _argv_of(monkeypatch: pytest.MonkeyPatch, repo: Git, op) -> list[tuple[str, ...]]:
+    """op 가 _run 에 넘긴 인자들. 원격은 진짜로 탄다."""
+    real = Git._run
+    seen: list[tuple[str, ...]] = []
+
+    def run(self, *args, **kw):
+        seen.append(args)
+        return real(self, *args, **kw)
+
+    monkeypatch.setattr(Git, "_run", run)
+    op()
+    return [a for a in seen if a[0] in ("fetch", "push", "ls-remote")]
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        lambda g: g.peek("refs/heads/main"),
+        lambda g: g.push(g.fetch("refs/heads/main"), "refs/heads/dd", expected=None),
+        lambda g: g.delete_remote("refs/heads/nope", None),
+    ],
+    ids=["peek", "push", "delete"],
+)
+def test_url_and_refs_follow_double_dash(repo: Git, monkeypatch: pytest.MonkeyPatch, op):
+    """원격·ref 자리 앞에는 항상 `--` — 옵션 모양 값이 와도 옵션이 아니다."""
+    calls = _argv_of(monkeypatch, repo, lambda: op(repo))
+    assert calls
+    for args in calls:
+        dd = args.index("--")
+        assert all(not a.startswith("-") for a in args[dd + 1 :]), args

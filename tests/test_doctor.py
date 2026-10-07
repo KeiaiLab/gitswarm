@@ -176,3 +176,24 @@ def test_ssh_mux_reports_core_ssh_command(home: Path, monkeypatch):
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "ssh -i /k")
     check = _check(diagnose(SSH_URL, home), "ssh_mux")
     assert check["detail"] == "disabled: caller set core.sshCommand"
+
+
+def test_ssh_mux_ignores_repo_config_around_home(tmp_path: Path, monkeypatch):
+    """hive 가 없을 때 홈을 감싼 레포의 core.sshCommand 는 hive(bare)에 상속되지 않는다."""
+    _no_network(monkeypatch)
+    outer = tmp_path / "outer"
+    git("init", "-q", str(outer), cwd=tmp_path)
+    git("config", "core.sshCommand", "ssh -i /k", cwd=outer)
+    home = outer / "gs-home"
+    check = _check(diagnose(SSH_URL, home), "ssh_mux")
+    assert check == {"name": "ssh_mux", "ok": True, "detail": "connections are multiplexed"}
+
+
+def test_ssh_mux_reads_the_hive_repo_config(home: Path, monkeypatch):
+    from gitswarm.store.hive import hive_path
+
+    _no_network(monkeypatch)
+    repo = Git.init_bare(hive_path(SSH_URL, home) / "repo.git")
+    git("config", "core.sshCommand", "ssh -i /k", cwd=repo.repo)
+    check = _check(diagnose(SSH_URL, home), "ssh_mux")
+    assert check["detail"] == "disabled: caller set core.sshCommand"

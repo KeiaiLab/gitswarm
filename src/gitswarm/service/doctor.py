@@ -143,9 +143,13 @@ def _ssh_mux(remote: str, home: Path) -> Check:
     if not is_ssh_url(remote):
         return Check("ssh_mux", True, "not an ssh remote")
 
-    # hive 가 아직 없으면 그 자리 대신 홈에서 설정을 읽는다(git -C 는 있는 디렉터리여야 한다)
+    # hive 가 아직 없으면 빈 임시 자리에서 읽는다 — 홈을 감싼 레포의 설정은 bare hive 에 상속되지 않는다
     repo = hive_path(remote, home) / REPO_DIR
-    override = Git(repo if repo.is_dir() else home).ssh_override()
+    if repo.is_dir():
+        override = Git(repo).ssh_override()
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            override = Git(Path(tmp)).ssh_override()
     if override:
         return Check("ssh_mux", True, f"disabled: caller set {override}")
 

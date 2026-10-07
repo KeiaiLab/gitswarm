@@ -53,17 +53,18 @@ def hive_id(url: str) -> str:
 def _stored_url(hive_file: Path) -> str:
     """hive.toml 의 url. 손상·허용 목록 밖이면 InvalidState — 이 값은 곧 git 에 넘어간다."""
     try:
-        url = tomllib.loads(hive_file.read_text())["url"]
+        url = tomllib.loads(hive_file.read_text(encoding="utf-8"))["url"]
         if not isinstance(url, str):
             raise TypeError(type(url).__name__)
         return validate_remote_url(url)
-    except (ValueError, KeyError, TypeError, InvalidState):
+    except (OSError, ValueError, KeyError, TypeError, InvalidState):
         raise InvalidState(f"hive.toml is corrupt: {hive_file}") from None
 
 
 def _hive_toml(url: str) -> str:
     # JSON 문자열 이스케이프는 TOML basic string 과 호환된다(`"`, `\`, \uXXXX)
-    return f"url = {json.dumps(url)}\n"
+    # ensure_ascii=False — \uXXXX 대리쌍(비-BMP)은 TOML 이 받지 않는다
+    return f"url = {json.dumps(url, ensure_ascii=False)}\n"
 
 
 def worktree_owner(path: Path, home: Path) -> str | None:
@@ -82,7 +83,7 @@ def _build(at: Path, url: str) -> None:
     git.set_origin(url)
     git.ls_remote(PROBE_REF)
     (at / WT_DIR).mkdir()
-    (at / HIVE_FILE).write_text(_hive_toml(url))
+    (at / HIVE_FILE).write_text(_hive_toml(url), encoding="utf-8")
 
 
 @contextmanager

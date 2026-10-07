@@ -208,3 +208,22 @@ def test_sweep_skips_a_temp_dir_that_vanishes(remote_url: str, home: Path, monke
 
     monkeypatch.setattr(Path, "stat", stat)
     assert Hive.init(remote_url, home).url == remote_url
+
+
+def test_non_bmp_url_round_trips(tmp_path: Path, home: Path):
+    from tests.conftest import git
+
+    bare = tmp_path / "😀.git"
+    git("init", "--bare", "-q", str(bare), cwd=tmp_path)
+    assert Hive.init(str(bare), home).url == str(bare)
+    assert Hive.open(str(bare), home).url == str(bare)
+
+
+def test_unreadable_hive_toml_is_invalid_state(remote_url: str, home: Path):
+    from gitswarm.errors import InvalidState
+
+    hive = Hive.init(remote_url, home)
+    (hive.path / "hive.toml").unlink()
+    (hive.path / "hive.toml").mkdir()  # 읽으면 IsADirectoryError
+    with pytest.raises(InvalidState, match=r"hive\.toml is corrupt"):
+        Hive.open(remote_url, home)
