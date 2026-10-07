@@ -8,8 +8,9 @@ create ──▶ open ──publish──▶ published ──drop──▶ dropp
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -22,7 +23,6 @@ from gitswarm.config import load_config
 from gitswarm.constants import (
     HEADS,
     TTL_FOREVER,
-    ULID_LEN,
     meta_path,
     ws_branch,
     ws_ref,
@@ -31,6 +31,8 @@ from gitswarm.errors import InvalidState, NotFound
 from gitswarm.events import Event, Sink
 from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
+
+ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 
 EV_CREATED = "ws.created"
 EV_PUBLISHED = "ws.published"
@@ -55,6 +57,12 @@ TRANSITIONS: dict[WsState, frozenset[WsState]] = {
     WsState.PUBLISHED: frozenset({WsState.PUBLISHED, WsState.DROPPED}),
     WsState.DROPPED: frozenset({WsState.DROPPED}),
 }
+
+
+def _check_id(ws_id: str) -> str:
+    if not ULID_RE.match(ws_id):
+        raise NotFound(f"invalid workspace id: {ws_id!r}")
+    return ws_id
 
 
 def utcnow() -> datetime:
@@ -91,7 +99,16 @@ class Workspace:
     def from_json(cls, data: bytes) -> Workspace:
         d = json.loads(data)
         d["state"] = WsState(d["state"])
-        return cls(**d)
+        known = {f.name for f in fields(cls)}
+        ws = cls(**{k: v for k, v in d.items() if k in known})
+        _check_id(ws.id)
+        if ws.branch != ws_ref(ws.id):
+            raise InvalidState(
+                f"{ws.id}: stored branch {ws.branch!r} does not match {ws_ref(ws.id)!r}"
+            )
+        if ws.parent is not None:
+            _check_id(ws.parent)
+        return ws
 
     def with_state(self, state: WsState) -> Workspace:
         if state not in TRANSITIONS[self.state]:
@@ -132,8 +149,7 @@ class WorkspaceService:
 
     # ── 조회 ──────────────────────────────────────────────────
     def get(self, ws_id: str) -> Workspace:
-        if len(ws_id) != ULID_LEN:
-            raise NotFound(f"invalid workspace id: {ws_id}")
+        _check_id(ws_id)
         data = self.store.read(meta_path(ws_id))
         if data is None:
             raise NotFound(f"workspace {ws_id} not found")

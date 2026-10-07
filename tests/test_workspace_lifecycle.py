@@ -1,4 +1,5 @@
 # tests/test_workspace_lifecycle.py
+import json
 import multiprocessing as mp
 from pathlib import Path
 
@@ -7,11 +8,17 @@ import pytest
 from gitswarm.adapters.plain import PlainAdapter
 from gitswarm.adapters.remote import Capability, Scope, Token
 from gitswarm.adapters.select import repo_name
-from gitswarm.constants import ULID_LEN, tracking_ref, ws_ref
+from gitswarm.constants import ULID_LEN, meta_path, tracking_ref, ws_ref
 from gitswarm.errors import InvalidState, NotFound
-from gitswarm.service.workspace import Checkout, WorkspaceService, WsState, open_service
+from gitswarm.service.workspace import (
+    Checkout,
+    Workspace,
+    WorkspaceService,
+    WsState,
+    open_service,
+)
 from gitswarm.store.hive import Hive
-from gitswarm.store.meta import MetaStore
+from gitswarm.store.meta import Change, MetaStore
 
 
 @pytest.fixture
@@ -133,3 +140,44 @@ def test_branch_push_rejected_writes_nothing(svc: WorkspaceService, monkeypatch)
         svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
     assert svc.list(None) == []
     assert svc.store.list("ws/") == []
+
+
+FORGED_ID = "01J00000000000000000000001"
+
+
+def _forge(svc: WorkspaceService) -> None:
+    body = Workspace(
+        id=FORGED_ID,
+        state=WsState.OPEN,
+        base_ref="refs/heads/main",
+        base_oid="0" * 40,
+        branch="--upload-pack=x",
+    ).to_json()
+    svc.store.apply(Change(meta_path(FORGED_ID), body, f"ws.created {FORGED_ID}"))
+
+
+def test_get_rejects_path_like_id(svc: WorkspaceService):
+    with pytest.raises(NotFound):
+        svc.get("../../etc/passwd/0000000000"[:ULID_LEN])
+    with pytest.raises(NotFound):
+        svc.get("0" * 12 + "/" + "0" * 13)
+
+
+def test_forged_branch_fails_closed(svc: WorkspaceService):
+    _forge(svc)
+    with pytest.raises(InvalidState):
+        svc.get(FORGED_ID)
+    with pytest.raises(InvalidState):
+        svc.list(None)
+
+
+def test_from_json_ignores_unknown_keys():
+    ws = Workspace(
+        id=FORGED_ID,
+        state=WsState.OPEN,
+        base_ref="refs/heads/main",
+        base_oid="a",
+        branch=ws_ref(FORGED_ID),
+    )
+    d = ws.to_dict() | {"future": 1}
+    assert Workspace.from_json(json.dumps(d).encode()) == ws
