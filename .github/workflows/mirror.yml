@@ -1,0 +1,37 @@
+# GitHub-side pull mirror. Canonical development, CI and landing happen on
+# git.keiailab.com/keiailab-oss/gitswarm (a private org, so anonymous clones
+# fail there). This workflow runs ONLY on github.com/KeiaiLab/gitswarm: it
+# fetches the canonical repository with a repo-limited read token and
+# force-pushes every branch and tag here. Forgejo ignores .github/.
+name: mirror
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+permissions:
+  contents: write
+concurrency:
+  group: mirror
+  cancel-in-progress: false
+jobs:
+  mirror:
+    if: github.repository == 'KeiaiLab/gitswarm'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Mirror canonical → GitHub
+        env:
+          FORGEJO_READ_TOKEN: ${{ secrets.FORGEJO_READ_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$FORGEJO_READ_TOKEN"
+          git clone --quiet --mirror \
+            "https://x-access-token:${FORGEJO_READ_TOKEN}@git.keiailab.com/keiailab-oss/gitswarm.git" src.git
+          cd src.git
+          # Transient agent workspace refs and the meta branch are not part of the mirror.
+          git for-each-ref --format='%(refname)' 'refs/heads/gitswarm/*' \
+            | xargs -r -n1 git update-ref -d
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --quiet --mirror origin
+          echo "mirrored $(git rev-parse stable) to ${GITHUB_REPOSITORY}"
