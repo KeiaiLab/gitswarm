@@ -152,12 +152,12 @@ lease 기준(§4.1)이나 tracking ref 를 움직이지 않는다.
 
 ```python
 class RemoteAdapter(Protocol):
-    def capabilities(self) -> set[Capability]            # TOKEN · EVENTS · PR
+    def capabilities(self) -> set[Capability]            # TOKEN 만 — 어댑터가 더 필요로 할 때 늘린다
     def issue_token(self, ws: Workspace, scope: Scope) -> Token   # 없으면 Unsupported
     def revoke_token(self, token: Token) -> None
 ```
 
-- **plain**(A 첫 어댑터): 임의 git URL. TOKEN·EVENTS·PR 전부 `Unsupported` 로 명시 반환.
+- **plain**(A 첫 어댑터): 임의 git URL. TOKEN 이 `Unsupported` 로 명시 반환.
 - **forgejo**(A 마지막 슬라이스): 레포 한정 PAT 발급(Forgejo 16 `repositories` 필드).
   scope = `read` | `write`(workspace 브랜치 push). drop 시 revoke. 관리 자격은
   `config.toml` 이 가리키는 파일 경로에서 읽고 로그·출력에 내지 않는다.

@@ -27,6 +27,16 @@ def git(*args: str, cwd: Path) -> str:
     return out.stdout.strip()
 
 
+def ls_remote_prefix(repo_dir: Path, prefix: str) -> dict[str, str]:
+    """원격에서 prefix 로 시작하는 ref → oid."""
+    out = git("ls-remote", "origin", f"{prefix}*", cwd=repo_dir)
+    refs = {}
+    for line in filter(None, out.split("\n")):
+        oid, ref = line.split("\t", 1)
+        refs[ref] = oid
+    return refs
+
+
 @pytest.fixture
 def remote_url(tmp_path: Path) -> str:
     """main 에 커밋 1개(README.md)가 있는 bare 원격."""

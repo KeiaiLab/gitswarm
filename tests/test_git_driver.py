@@ -309,18 +309,6 @@ def test_other_fetch_errors_are_not_retried(repo: Git, monkeypatch: pytest.Monke
     assert calls[0] == 1
 
 
-def test_ls_remote_prefix(repo: Git):
-    base = repo.fetch("refs/heads/main")
-    assert repo.ls_remote_prefix("refs/heads/gitswarm/ws/") == {}
-    repo.push(base, "refs/heads/gitswarm/ws/a", expected=None)
-    repo.push(base, "refs/heads/gitswarm/ws/b", expected=None)
-    repo.push(base, "refs/heads/gitswarm/meta", expected=None)
-    assert repo.ls_remote_prefix("refs/heads/gitswarm/ws/") == {
-        "refs/heads/gitswarm/ws/a": base,
-        "refs/heads/gitswarm/ws/b": base,
-    }
-
-
 def test_is_ancestor(repo: Git):
     base = repo.fetch("refs/heads/main")
     child = repo.commit_tree(repo.build_tree({}), [base], "child")

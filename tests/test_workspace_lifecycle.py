@@ -8,9 +8,10 @@ import pytest
 from gitswarm.adapters.plain import PlainAdapter
 from gitswarm.adapters.remote import Capability, Scope, Token
 from gitswarm.adapters.select import repo_name
-from gitswarm.constants import META_REF, ULID_LEN, lease_ref, meta_path, tracking_ref, ws_ref
+from gitswarm.constants import META_REF, lease_ref, meta_path, tracking_ref, ws_ref
 from gitswarm.errors import Conflict, InvalidState, NotFound
 from gitswarm.service.workspace import (
+    ULID_RE,
     Checkout,
     Workspace,
     WorkspaceService,
@@ -20,6 +21,7 @@ from gitswarm.service.workspace import (
 from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
 from tests.conftest import git as git_cli
+from tests.conftest import ls_remote_prefix
 
 
 @pytest.fixture
@@ -32,7 +34,7 @@ def test_create_records_meta_and_pushes_branch(svc: WorkspaceService):
     r = svc.create(
         "main", {"name": "impl"}, ttl_s=10, from_ws=None, checkout=Checkout.NONE, labels={}
     )
-    assert len(r.id) == ULID_LEN
+    assert ULID_RE.fullmatch(r.id)
     assert r.branch == ws_ref(r.id)
     assert r.path is None and r.token is None
     assert svc.hive.git.ls_remote(r.branch) == r.base_oid
@@ -112,7 +114,7 @@ def test_concurrent_create_records_match_branches(remote_url: str, home: Path):
     hive = Hive.init(remote_url, home)
     codes = _run_creators(remote_url, home, LOCKSTEP_CREATORS)
     assert codes == [0] * LOCKSTEP_CREATORS
-    branches = hive.git.ls_remote_prefix(ws_ref(""))
+    branches = ls_remote_prefix(hive.git.repo, ws_ref(""))
     records = open_service(remote_url, home).list(WsState.OPEN)
     assert len(records) == len(branches) == LOCKSTEP_CREATORS
     assert {w.branch for w in records} == set(branches)
@@ -177,7 +179,7 @@ def _forge(svc: WorkspaceService) -> None:
 
 def test_get_rejects_path_like_id(svc: WorkspaceService):
     with pytest.raises(NotFound):
-        svc.get("../../etc/passwd/0000000000"[:ULID_LEN])
+        svc.get("../../etc/passwd/000000000")
     with pytest.raises(NotFound):
         svc.get("0" * 12 + "/" + "0" * 13)
 
@@ -307,7 +309,7 @@ def test_meta_exhaustion_compensates_branch_and_token(
         svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
 
     # 기록 없는 브랜치·토큰을 남기지 않는다
-    assert hive.git.ls_remote_prefix(ws_ref("")) == {}
+    assert ls_remote_prefix(hive.git.repo, ws_ref("")) == {}
     assert len(adapter.issued) == 1 and adapter.revoked == ["42"]
     ws_id = adapter.issued[0][1]
     assert hive.git.exists(ws_ref(ws_id)) is False
@@ -319,7 +321,7 @@ def test_create_rejects_bad_ttl(svc: WorkspaceService, ttl):
     with pytest.raises(InvalidState):
         svc.create("main", {}, ttl_s=ttl, from_ws=None, checkout=Checkout.NONE, labels={})
     assert svc.store.list("ws/") == []
-    assert svc.hive.git.ls_remote_prefix(ws_ref("")) == {}
+    assert ls_remote_prefix(svc.hive.git.repo, ws_ref("")) == {}
 
 
 def test_malformed_record_does_not_halt_list_gc_drop(svc: WorkspaceService):

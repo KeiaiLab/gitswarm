@@ -9,8 +9,6 @@ from typing import Protocol
 
 class Capability(StrEnum):
     TOKEN = "token"
-    EVENTS = "events"
-    PR = "pr"
 
 
 class Scope(StrEnum):

@@ -174,14 +174,8 @@ def main() -> None:
     except click_exc.UsageError as e:
         typer.echo(json.dumps(usage_payload(e.format_message()), ensure_ascii=False))
         sys.exit(EXIT_USAGE)
-    except typer.Exit as e:
-        sys.exit(e.exit_code)
     except typer.Abort:
         typer.echo(json.dumps(usage_payload("aborted")))
         sys.exit(EXIT_USAGE)
 
     sys.exit(rc if isinstance(rc, int) else 0)
-
-
-if __name__ == "__main__":
-    sys.exit(main())
