@@ -17,12 +17,16 @@ uv run ruff check src scripts tests
 uv run ruff format --check src scripts tests
 uv run vulture src --min-confidence 60 --ignore-names "hive_init,ws_*,workspace_*,events_tail,mcp_serve,main"
 uv run pytest tests -q --cov --cov-report=term-missing
+uv build
+uv run --isolated --no-project --with dist/*.whl gitswarm --help >/dev/null
 ```
 
 - Coverage must be 100% (`fail_under = 100`). Do not add pragmas.
 - The vulture ignore list covers only entry points registered by typer and
   fastmcp decorators. Do not widen it to silence dead code; delete the code.
-- CI also runs `uv build` and a smoke run of the built wheel.
+- `uv build` and the wheel smoke run are part of the gate (last two lines).
+- `scripts/bench.py` checks round-trip budgets against a real remote; run it
+  after touching `driver/git.py` or the service call paths.
 
 ## Rules
 

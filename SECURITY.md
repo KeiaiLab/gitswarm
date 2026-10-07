@@ -15,6 +15,7 @@ gitswarm stores its state in a git remote and runs `git` against it.
   - `branch`: must equal the branch recomputed from `id`, so a forged record
     cannot aim a delete at another ref
   - `token_id`: digits only (it is placed in a URL path)
+  - `published_oid`: 40 lowercase hex
   - `created_at` (timezone required) and `ttl_s` (integer, bounded)
   - `--since` oid: 40 lowercase hex
   - file paths for `ws read` / `ws tree`: no absolute paths, no `..`
@@ -42,9 +43,23 @@ gitswarm stores its state in a git remote and runs `git` against it.
 - The credential is read from the file, kept with `repr=False`, and never
   logged or placed in error messages. Failures report the operation and the
   status code or exception class only.
+- GitHub: the App private key (PEM) is a full-installation secret; it can
+  mint tokens for every repository the App is installed on. `from_spec`
+  accepts only an RSA key, the PEM is held with `repr=False`, and it is
+  never logged or put in errors. Keep the file mode `600` and install the
+  App on the needed repositories only. The JWT is signed per call, valid
+  540 s, and not cached.
+- GitHub installation tokens last one hour and cannot be revoked by id.
+  `drop` does not end access: a token issued for a dropped workspace works
+  until it expires (the expiry is printed to stderr). Mitigate with
+  repository-scoped installs and branch protection. `Token.secret` has
+  `repr=False`; it is returned once by `ws create` and never stored.
 - Per-workspace tokens are repository-scoped (`read:repository` or
   `write:repository`), returned once by `ws create`, and revoked on drop.
   Only the token id is stored in meta.
+- SSH multiplexing: the control socket lives in `<hive>/.ssh-control/`
+  (directory mode `700`). It is skipped when you set `GIT_SSH_COMMAND`,
+  `GIT_SSH` or `core.sshCommand`.
 - CI: the clone token is removed from `.git/config` before the test suite
   runs, because tests execute pull-request code (`.forgejo/ci/verify.sh`).
 

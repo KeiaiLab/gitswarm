@@ -27,7 +27,7 @@ registry of workspaces in the same git remote.
                  ├──────────────────────────────────────────┤    remote.py (Protocol)
                  │ store/      meta.py (CAS) · hive.py      │    plain.py
                  ├──────────────────────────────────────────┤    forgejo.py
-                 │ driver/     git.py                       │
+                 │ driver/     git.py                       │    github.py
                  └───────────────────┬──────────────────────┘
                                      ▼
                               git subprocess ──▶ any git remote
@@ -67,6 +67,7 @@ Local hive (one per remote, `GITSWARM_HOME` or `~/.gitswarm`):
       refs/gitswarm/lease/gitswarm/ws/<id>  private publish/drop baseline
       refs/gitswarm/peek/gitswarm/ws/<id>   read-only lookups
     wt/<id>/                        worktree (create --checkout)
+    .ssh-control/mux                SSH ControlMaster socket (section 5)
 ```
 
 - `refs/heads/` is the one namespace every host accepts pushes to
@@ -91,7 +92,8 @@ Local hive (one per remote, `GITSWARM_HOME` or `~/.gitswarm`):
 | `created_at` | ISO-8601 with timezone | |
 | `ttl_s` | int | `0` = forever, else `<= MAX_TTL_S` (1 year); default `DEFAULT_TTL_S = 7200` |
 | `labels` | object | free-form |
-| `token_id` | digits or null | remote PAT id |
+| `token_id` | digits or null | adapter token id |
+| `published_oid` | 40-hex or null | remote tip recorded by `publish` |
 
 State machine (`TRANSITIONS`):
 
@@ -113,7 +115,8 @@ record is therefore untrusted input. `Workspace.from_json` fails closed with
 - `id` not a ULID, or different from the path it was read from (`_parse_record`)
 - `branch` different from the value recomputed from `id` (stops a record
   from pointing a delete at another ref)
-- `parent` not a ULID; `token_id` not digits (it goes into a URL path)
+- `parent` not a ULID; `token_id` not digits (it goes into a URL path);
+  `published_oid` not 40 lowercase hex
 - `ttl_s` not an int in range (bool rejected); `created_at` unparsable or
   without timezone
 
@@ -179,11 +182,17 @@ Four measured behaviours break the naive use (git 2.55).
 **1. Same-oid push skips the lease.** When the remote already holds the
 pushed oid, git prints `Everything up-to-date` and exits 0 without checking
 the lease. A same-oid push is not a CAS.
-Countermeasure: `Git.push` pre-checks with `ls-remote`. If the remote oid
-equals the pushed oid but differs from the expected value (`NULL_OID` for
-"must not exist"), it returns `False` without pushing. Residual window:
-between `ls-remote` and `push`; a push that wins in that window is a
-same-oid no-op, which loses nothing.
+Countermeasure: no `ls-remote` pre-check. `Git.push` runs once, without
+`-q`, and reads the result. rc 0 with a whole-line `Everything up-to-date`
+(a server hook may print the same words as `remote: ...`, so substring
+matching is wrong) means the remote already held `oid` and the lease was
+skipped. `push` returns `expected == oid`: success only if the caller
+expected that oid, otherwise `False` (a lost race). Nothing is pushed in
+either case, so there is no window to close.
+
+Every git call runs with `LC_ALL=C`. The `Everything up-to-date`,
+`couldn't find remote ref` and rejection markers are English text; a
+translated git would break the classification.
 
 **2. Rejections have several wordings.** `REJECTED_MARKERS`:
 
@@ -218,17 +227,56 @@ fetching: `cannot lock ref ... unable to create directory`. `fetch` and
 jittered backoff, retrying only when the error contains `cannot lock ref`.
 Other errors raise at once.
 
+**Absent refs are read from the error.** `fetch` and `peek` do one
+`git fetch` and treat `couldn't find remote ref` (or `remote ref does not
+exist`) as "absent": the local tracking or peek ref is deleted and `None`
+is returned. Other failures raise `RemoteError`.
+
+**SSH is multiplexed per hive.** Network commands (`fetch`, `push`,
+`ls-remote`) get `GIT_SSH_COMMAND` with `ControlMaster=auto`,
+`ControlPath=<repo>/.ssh-control/mux` and `ControlPersist` (60 s), so the
+calls of one command, and the next commands within the window, share one
+handshake. Multiplexing is skipped (plain git behaviour) when:
+
+- the caller set `GIT_SSH_COMMAND` or `GIT_SSH`, or git config has
+  `core.sshCommand` (the env var would override it);
+- the socket path is too long for `sun_path` (104 bytes, minus the
+  ssh temp suffix) or contains `"`.
+
+The socket name is fixed (`mux`, not `%C`) to stay under the path limit.
+That is safe because a hive holds exactly one remote.
+
+### Round trips
+
+Network calls per operation (one `fetch`, `push` or delete each):
+
+| operation | calls |
+|---|---|
+| `create`, `publish`, `drop` | 4 |
+| `read`, `tree` | 2 |
+| `get`, `list`, `events tail`, `gc` | 1 |
+
+`scripts/bench.py <remote-url>` measures this against a real remote: it
+counts ssh invocations and new handshakes per command over repeated
+create-to-drop cycles and exits 1 when a command exceeds its budget
+(`BUDGETS`: call count; 2.5 s median for `create` and `publish`).
+
 ## 6. publish, drop, gc
 
 **publish** (`open|published -> published`)
 
-1. Re-judge the transition, require a local worktree, read its `HEAD`.
-2. Push `HEAD` with lease = `_seen(branch)` (the private lease ref).
-3. If rejected: `peek` the remote tip. If it is an ancestor of `HEAD`
-   (`merge-base --is-ancestor`), the agent rebased onto it and no commit is
-   lost, so push once more with lease = that tip. Otherwise `Conflict`
-   ("run `git pull --rebase`").
-4. Move the lease ref to `HEAD`, then record `ws.published` via CAS.
+1. Re-judge the transition.
+2. With a local worktree: read its `HEAD` and push it with lease =
+   `_seen(branch)` (the private lease ref). If rejected, `peek` the remote
+   tip. If it is an ancestor of `HEAD` (`merge-base --is-ancestor`), the
+   agent rebased onto it and no commit is lost, so push once more with
+   lease = that tip. Otherwise `Conflict` ("run `git pull --rebase`").
+   Move the lease ref to `HEAD`. The recorded oid is `HEAD`.
+3. Without a worktree (another host pushed the branch): `peek` the remote
+   tip and record it. Tip equal to `base_oid` is `InvalidState` ("nothing
+   published"); a missing branch is `NotFound`. No push, no ancestry check.
+4. Record `ws.published` via CAS, with `published_oid` = the oid from 2 or
+   3. A repeated publish overwrites it.
 
 **drop** (`-> dropped`, idempotent) deletes the remote branch, local refs
 (branch, peek, lease), the worktree, revokes the token, then records
@@ -285,7 +333,7 @@ class RemoteAdapter(Protocol):
 ```
 
 Selection (`adapters/select.py`): the remote URL host is looked up in
-`config.toml` `[remote."<host>"]`; `adapter = "forgejo"` selects Forgejo,
+`config.toml` `[remote."<host>"]`; `adapter = "forgejo"` selects Forgejo, `"github"` selects GitHub,
 anything else (or no entry) selects plain. Both `https://` and scp-style
 `git@host:org/repo` URLs are parsed.
 
@@ -301,6 +349,21 @@ anything else (or no entry) selects plain. Both `https://` and scp-style
   credential. `revoke_token` accepts digits only (the id goes into the URL)
   and treats 404 as done. Drop revokes the recorded `token_id` even if the
   adapter config changed since.
+
+- **github**: App installation token. `user` is `<app_id>/<installation_id>`
+  (both positive digit strings, at most `MAX_ID_DIGITS`), `credential_file`
+  is the App PEM. `from_spec` loads the PEM and rejects anything that is not
+  an RSA private key (`Unsupported`). Each `issue_token` signs a fresh RS256
+  JWT (`iat` backdated 60 s, `exp` = now + `JWT_EXP_S` = 540 s, under
+  GitHub's 600 s cap), `POST /app/installations/<id>/access_tokens` with
+  `repositories: [<repo name>]` and `permissions: {contents: read|write}`.
+  The token lives one hour and has no name; `Token.id` is its expiry epoch.
+  It cannot be revoked by id (GitHub revokes only the token you present, and
+  gitswarm does not keep the secret), so `revoke_token` is a documented
+  no-op that prints the expiry time to stderr. It does not raise
+  `Unsupported`: the service reads that as "adapter has no tokens".
+  `Token.secret` and the PEM are `repr=False`; errors carry the operation
+  and HTTP status or exception class only.
 
 Other hosts plug in the same way: implement the Protocol, add a name in
 `select.py`. Git traffic is unaffected; adapters only add capabilities that
@@ -335,7 +398,7 @@ git does not have.
 - `pre-receive` hooks cover the "hook decline stays a hard error" case.
 - CLI: typer `CliRunner` and direct `main()` calls. MCP: in-process fastmcp
   client. Forgejo: `respx`.
-- Gates: `pytest --cov` with `fail_under = 100`, ruff, vulture. 187 tests at
+- Gates: `pytest --cov` with `fail_under = 100`, ruff, vulture. 253 tests at
   the time of writing.
 - Not tested: a real two-host race over a network. It is simulated by
   forcing the interleaving of two writers against one remote; the CAS
@@ -361,10 +424,14 @@ B and C are separate designs and are not implemented.
 
 ## Spec and code differences
 
+Checked against the spec amended for `published_oid` and the round-trip
+sentence.
+
 - spec section 1: `build.yml`; code: `.forgejo/workflows/ci.yml` + `.forgejo/ci/verify.sh`.
+- spec section 1 layout omits `adapters/github.py`, `adapters/select.py`; section 10 lists the GitHub adapter as out of scope while section 5 specifies it.
 - spec section 3 record: no `token_id`; code stores it.
 - spec section 3 gc: `{expired, invalid}`; code adds `conflicted`.
-- spec section 4: push-by-oid with lease only; code adds an `ls-remote` pre-check in `Git.push` for trap 1.
 - spec section 4 drop: lease on the last seen oid; code adds `LeaseMode` FOLLOW (explicit drop) vs STRICT (gc).
-- spec section 5: `capabilities() -> set`, `issue_token(ws, scope)`; code: `frozenset`, `issue_token(repo, ws_id, scope)`.
-- spec section 8: "no pragmas"; code has one `# pragma: no cover` (`surfaces/cli.py`, typer/click import fallback).
+- spec section 4.1/4.2: lease ref `refs/gitswarm/lease/<id>`, peek ref `<short>`; code uses the full ref name under each prefix.
+- spec section 5: `capabilities() -> set`, `issue_token(ws, scope)`, `revoke_token(token)`; code: `frozenset`, `issue_token(repo, ws_id, scope)`, `revoke_token(token_id: str)`.
+- spec section 7: no `Usage` kind; code has it (exit 1, surfaces only).
