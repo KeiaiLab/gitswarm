@@ -137,6 +137,25 @@ def test_push_pre_receive_hook_decline_raises_error(tmp_path: Path):
         g.push(oid, "refs/heads/test", expected=None)
 
 
+def test_delete_remote_hook_decline_raises_error(tmp_path: Path):
+    """훅이 삭제를 거절하면 lease 거절도 '이미 없음'도 아니다 — RemoteError."""
+    remote_path = tmp_path / "remote_with_hook.git"
+    Git.init_bare(remote_path)
+    g = Git.init_bare(tmp_path / "work.git")
+    g.set_origin(remote_path.as_uri())
+    oid = g.commit_tree(g.build_tree({}), [], "test")
+    assert g.push(oid, "refs/heads/test", expected=None)
+
+    # 브랜치가 생긴 뒤에 거절 훅을 건다
+    hook_path = remote_path / "hooks" / "pre-receive"
+    hook_path.write_text("#!/bin/sh\nexit 1\n")
+    hook_path.chmod(0o755)
+
+    with pytest.raises(RemoteError):
+        g.delete_remote("refs/heads/test", oid)
+    assert g.ls_remote("refs/heads/test") == oid
+
+
 def test_push_lease_stale_after_remote_moved_returns_false(tmp_path: Path):
     """Sequential stale info: remote moves between fetch and push → return False."""
     remote_path = tmp_path / "remote_race.git"

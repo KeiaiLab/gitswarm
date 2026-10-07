@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from gitswarm.surfaces import cli
 from gitswarm.surfaces.cli import app, main
 from tests.conftest import git
 
@@ -167,3 +168,28 @@ def test_events_tail_via_cli(inited: str):
 def test_events_tail_bad_since_exits_2(inited: str):
     code, out = run("events", "tail", "--since", "bogus", remote=inited)
     assert code == 2 and out["error"]["kind"] == "NotFound"
+
+
+def test_label_pairs_are_recorded(inited: str):
+    code, out = run("ws", "create", "--label", "a=b", "--label", "c=", remote=inited)
+    assert code == 0
+    code, got = run("ws", "get", out["id"], remote=inited)
+    assert got["labels"] == {"a": "b", "c": ""}
+
+
+def test_mcp_command_serves(monkeypatch):
+    calls: list[int] = []
+    monkeypatch.setattr("gitswarm.surfaces.mcp.serve", lambda: calls.append(1))
+    res = runner.invoke(app, ["mcp"])
+    assert res.exit_code == 0 and calls == [1]
+
+
+def test_main_turns_abort_into_usage_json(monkeypatch, capsys):
+    def abort(*args, **kwargs):
+        raise cli.typer.Abort()
+
+    monkeypatch.setattr(cli, "app", abort)
+    code, stdout = main_cli(monkeypatch, capsys, "ws", "list")
+    payload = json.loads(stdout.strip())
+    assert code == 1
+    assert payload["error"] == {"kind": "Usage", "detail": "aborted"}

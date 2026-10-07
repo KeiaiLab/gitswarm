@@ -81,6 +81,18 @@ fail-closed 한다. `ws drop` 은 그 workspace 브랜치의 발행 안 된 원�
 것 포함)까지 지우는 파괴적 동작이고, `ws gc` 는 이 호스트가 본 적 없는 커밋을 절대
 지우지 않는다.
 
+## 개발
+
+```
+uv sync --dev
+uv run ruff check src scripts tests
+uv run vulture src --min-confidence 60 --ignore-names "hive_init,ws_*,workspace_*,events_tail,mcp_serve,main"
+uv run pytest -q --cov
+```
+
+죽은 코드 0 · 커버리지 100%(`fail_under = 100`)가 CI 게이트다. vulture 허용 이름은 typer·fastmcp
+데코레이터가 등록하는 진입점과 console script `main` 뿐이다.
+
 ## 로드맵
 
 A Workspace(이 판) → B Intent(커밋 ↔ 지시·근거 기록) → C Landing(동시 결과 기계 병합).

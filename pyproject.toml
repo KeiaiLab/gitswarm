@@ -40,4 +40,17 @@ project-includes = ["src", "tests"]
 python-version = "3.11"
 
 [dependency-groups]
-dev = ["ruff>=0.15,<0.16", "pytest>=9,<10", "respx>=0.21"]
+dev = [
+    "ruff>=0.15,<0.16",
+    "pytest>=9,<10",
+    "pytest-cov>=6",
+    "respx>=0.21",
+    "vulture>=2.14",
+]
+
+[tool.coverage.run]
+source = ["gitswarm"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
