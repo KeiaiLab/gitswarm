@@ -51,6 +51,12 @@ worktree 없이 브랜치만 받은 에이전트는 평범한 git 으로 일한�
     user = "bot"
     credential_file = "~/.config/gitswarm/forgejo.cred"
 
+    [remote."github.com"]
+    adapter = "github"                  # GitHub App installation token
+    api = "https://api.github.com"
+    user = "<app_id>/<installation_id>" # user 필드를 두 정수로 재사용
+    credential_file = "~/.config/gitswarm/github-app.pem"
+
     [[sink]]
     kind = "jsonl"                      # 또는 webhook
     target = "~/.gitswarm/events.jsonl"
@@ -58,6 +64,9 @@ worktree 없이 브랜치만 받은 에이전트는 평범한 git 으로 일한�
 **자격 범위**: `credential_file` 의 비밀은 `user` 계정 전체의 비밀이다(Forgejo 토큰
 엔드포인트는 계정 인증만 받는다). 따라서 `user` 는 토큰 발급만을 위한 전용 봇
 계정이어야 하고, 대상 org 의 멤버이며, 대상 레포에만 쓰기 권한을 가진다.
+
+GitHub 토큰은 대상 레포로 한정된 App installation token 이며 1시간 유효하고 id 로 폐기할 수
+없다. App 은 설치된 레포에 `contents: write` 가 필요하다.
 
 ## 상태 배치
 

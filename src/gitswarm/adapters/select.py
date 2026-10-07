@@ -9,6 +9,7 @@ from gitswarm.adapters.remote import RemoteAdapter
 from gitswarm.config import Config
 
 FORGEJO = "forgejo"
+GITHUB = "github"
 SCP_SEP = ":"
 
 
@@ -36,6 +37,11 @@ def repo_name(url: str) -> str:
 
 def adapter_for(url: str, config: Config) -> RemoteAdapter:
     spec = config.remotes.get(host_of(url))
+    if spec is not None and spec.adapter == GITHUB:
+        from gitswarm.adapters.github import GitHubAdapter
+
+        return GitHubAdapter.from_spec(spec)
+
     if spec is None or spec.adapter != FORGEJO:
         return PlainAdapter()
 

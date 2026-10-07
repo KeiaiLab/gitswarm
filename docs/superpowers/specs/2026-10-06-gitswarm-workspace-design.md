@@ -161,6 +161,9 @@ class RemoteAdapter(Protocol):
 - **forgejo**(A 마지막 슬라이스): 레포 한정 PAT 발급(Forgejo 16 `repositories` 필드).
   scope = `read` | `write`(workspace 브랜치 push). drop 시 revoke. 관리 자격은
   `config.toml` 이 가리키는 파일 경로에서 읽고 로그·출력에 내지 않는다.
+- **github**: App installation token(`repositories`·`contents` 한정, 1시간, id 폐기 불가 —
+  `revoke_token` 은 만료 시각을 stderr 에 남기는 no-op). `user` = `<app_id>/<installation_id>`,
+  `credential_file` = App PEM.
 - 선택: `config.toml` `[remote."git.example.com"] adapter = "forgejo"`. 미선언 = plain.
 
 ## 6. 이벤트

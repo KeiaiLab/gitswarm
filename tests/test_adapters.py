@@ -26,6 +26,8 @@ def test_plain_adapter_declares_nothing():
         ("https://git.example.com/org/repo", "git.example.com", "org/repo"),
         ("git@git.example.com:org/repo.git", "git.example.com", "org/repo"),
         ("file:///tmp/x/remote.git", "", "x/remote"),
+        ("git@github.com:org/repo.git", "github.com", "org/repo"),
+        ("https://github.com/org/repo", "github.com", "org/repo"),
         ("/tmp/x/remote.git", "", "x/remote"),  # scheme 도 ":" 도 없는 로컬 경로
     ],
 )
