@@ -108,7 +108,10 @@ $ gitswarm ws publish 01M4B3PT92MMV3BST3Q0JDNBR6
 {"ok": false, "error": {"kind": "InvalidState", "detail": "nothing published: branch is still at base; commit and push to the branch first"}}
 ```
 
-실행을 조율하는 쪽이 workspace 를 거두거나(`ws drop`), `ttl_s` 가 지나면 `ws gc` 가 거둔다.
+실행을 조율하는 쪽이 `ws drop` 으로 거둔다. `ws gc` 는 `ttl_s` 가 지났고 이 호스트가 마지막으로
+본 뒤 브랜치가 움직이지 않은 open workspace 만 거둔다. published workspace 는 건드리지 않고,
+다른 호스트가 push 한 만료 workspace 는 거두지 않고 `conflicted` 로 보고한다. 둘 다 명시적
+`ws drop <id>` 가 필요하다.
 자세히: [docs/recipes/other-host.md](docs/recipes/other-host.md).
 
 ## publish 가 Conflict 를 내면

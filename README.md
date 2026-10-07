@@ -113,8 +113,11 @@ $ gitswarm ws publish 01M4B3PT92MMV3BST3Q0JDNBR6
 {"ok": false, "error": {"kind": "InvalidState", "detail": "nothing published: branch is still at base; commit and push to the branch first"}}
 ```
 
-Whoever coordinates the run drops the workspace (`ws drop`), or `ws gc`
-does it once `ttl_s` has passed. More: [docs/recipes/other-host.md](docs/recipes/other-host.md).
+Whoever coordinates the run drops the workspace with `ws drop`.
+`ws gc` reclaims only open workspaces past `ttl_s` whose branch has not
+moved since this host last saw it. It never touches published workspaces,
+and it reports an expired workspace that another host pushed to under
+`conflicted` instead of dropping it. Both need an explicit `ws drop <id>`. More: [docs/recipes/other-host.md](docs/recipes/other-host.md).
 
 ## When publish says Conflict
 

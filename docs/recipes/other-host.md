@@ -70,6 +70,7 @@ hour).
 ## Cleanup
 
 The coordinator owns cleanup: `ws drop <id>` when it has what it needs.
-`ws gc` drops open workspaces past `ttl_s` (default 7200 s), but skips a
-branch that received commits this host has not seen (`conflicted`);
-`ws drop` removes those.
+`ws gc` reclaims only open workspaces past `ttl_s` (default 7200 s) whose branch has not
+moved since this host last saw it. It never touches published workspaces,
+and it reports an expired workspace that another host pushed to under
+`conflicted` instead of dropping it. Both need an explicit `ws drop <id>`.

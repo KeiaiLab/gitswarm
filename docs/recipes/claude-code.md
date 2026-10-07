@@ -91,5 +91,8 @@ and drops each workspace when it has taken what it needs:
 - On `Conflict` from `workspace_publish`, run the `git pull --rebase …`
   from `detail` in the worktree and publish again.
 - On `InvalidState` "nothing published", commit first.
-- The lead calls `workspace_drop` (or `workspace_gc` for anything past its
-  `ttl_s`).
+- The lead calls `workspace_drop` for every workspace it is done with.
+  `workspace_gc` reclaims only open workspaces past `ttl_s` whose branch
+  has not moved since this host last saw it; it never touches published
+  workspaces and reports expired ones another host pushed to under
+  `conflicted`. Both need an explicit `workspace_drop`.
