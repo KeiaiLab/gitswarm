@@ -2,6 +2,8 @@
 
 [English](README.md)
 
+정본 레포: git.keiailab.com/keiailab-oss/gitswarm · 미러: github.com/KeiaiLab/gitswarm (이슈는 어느 쪽이든 환영)
+
 gitswarm 은 여러 LLM 에이전트가 같은 레포를 동시에 다룰 때 쓰는, 임의 git 원격 위의 조율
 계층이다. 에이전트 실행마다 격리된 workspace 브랜치를 주고, 체크아웃 없이 서로의 작업을
 읽고, 발행하고, 거둔다. 상태는 전부 원격(`refs/heads/gitswarm/*`)에 있다 — 서버·데몬·DB
@@ -16,7 +18,7 @@ uv tool install gitswarm      # 또는: uvx gitswarm --help
 PyPI 발행 전이다. 그때까지는 git 에서 설치한다:
 
 ```sh
-uvx --from git+https://git.keiailab.com/keiailab-oss/gitswarm gitswarm --help
+uvx --from git+https://github.com/KeiaiLab/gitswarm gitswarm --help
 ```
 
 Claude Code(자세히: [docs/recipes/claude-code.md](docs/recipes/claude-code.md)):
@@ -24,7 +26,7 @@ Claude Code(자세히: [docs/recipes/claude-code.md](docs/recipes/claude-code.md
 ```sh
 claude mcp add gitswarm -- uvx gitswarm mcp
 # PyPI 전까지:
-claude mcp add gitswarm -- uvx --from git+https://git.keiailab.com/keiailab-oss/gitswarm gitswarm mcp
+claude mcp add gitswarm -- uvx --from git+https://github.com/KeiaiLab/gitswarm gitswarm mcp
 ```
 
 플랫폼: POSIX(Linux, macOS), git >= 2.39, Python >= 3.11.

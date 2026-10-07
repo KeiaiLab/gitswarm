@@ -6,7 +6,7 @@
 # from PyPI (pending)
 claude mcp add gitswarm -- uvx gitswarm mcp
 # until PyPI
-claude mcp add gitswarm -- uvx --from git+https://git.keiailab.com/keiailab-oss/gitswarm gitswarm mcp
+claude mcp add gitswarm -- uvx --from git+https://github.com/KeiaiLab/gitswarm gitswarm mcp
 ```
 
 - `-s user` makes it available in every project; the default scope is the

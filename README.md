@@ -2,6 +2,8 @@
 
 [한국어](README.ko.md)
 
+Canonical repository: git.keiailab.com/keiailab-oss/gitswarm · mirror: github.com/KeiaiLab/gitswarm (issues welcome on either)
+
 gitswarm is a coordination layer over any git remote for many LLM agents
 working on the same repository at once. Each agent run gets an isolated
 workspace branch; agents read each other's work without a checkout, publish,
@@ -18,7 +20,7 @@ uv tool install gitswarm      # or: uvx gitswarm --help
 PyPI publication is pending. Until then, install from git:
 
 ```sh
-uvx --from git+https://git.keiailab.com/keiailab-oss/gitswarm gitswarm --help
+uvx --from git+https://github.com/KeiaiLab/gitswarm gitswarm --help
 ```
 
 Claude Code (details: [docs/recipes/claude-code.md](docs/recipes/claude-code.md)):
@@ -26,7 +28,7 @@ Claude Code (details: [docs/recipes/claude-code.md](docs/recipes/claude-code.md)
 ```sh
 claude mcp add gitswarm -- uvx gitswarm mcp
 # until PyPI:
-claude mcp add gitswarm -- uvx --from git+https://git.keiailab.com/keiailab-oss/gitswarm gitswarm mcp
+claude mcp add gitswarm -- uvx --from git+https://github.com/KeiaiLab/gitswarm gitswarm mcp
 ```
 
 Platform: POSIX (Linux, macOS), git >= 2.39, Python >= 3.11.
