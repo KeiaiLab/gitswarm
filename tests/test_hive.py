@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -227,3 +228,52 @@ def test_unreadable_hive_toml_is_invalid_state(remote_url: str, home: Path):
     (hive.path / "hive.toml").mkdir()  # 읽으면 IsADirectoryError
     with pytest.raises(InvalidState, match=r"hive\.toml is corrupt"):
         Hive.open(remote_url, home)
+
+
+LOCK_THREADS = 4
+SLOW_RENAME_S = 0.2
+
+
+def test_install_is_serialized_by_the_lock(remote_url: str, home: Path, monkeypatch):
+    """재확인과 rename 사이를 늘린다 — 잠금이 없으면 진 스레드의 rename 이 실패한다."""
+    import os
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    real_rename = os.rename
+
+    def slow_rename(src, dst):
+        time.sleep(SLOW_RENAME_S)
+        real_rename(src, dst)
+
+    monkeypatch.setattr("gitswarm.store.hive.os.rename", slow_rename)
+    with ThreadPoolExecutor(LOCK_THREADS) as pool:
+        hives = list(pool.map(lambda _: Hive.init(remote_url, home), range(LOCK_THREADS)))
+    assert len({h.path for h in hives}) == 1
+    assert _hive_dirs(home) == [hive_id(remote_url)]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+def test_read_only_home_is_invalid_state(remote_url: str, home: Path):
+    from gitswarm.errors import InvalidState
+
+    home.chmod(0o500)
+    try:
+        with pytest.raises(InvalidState, match="cannot write hive home: PermissionError"):
+            Hive.init(remote_url, home)
+    finally:
+        home.chmod(0o700)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+def test_read_only_hives_dir_is_invalid_state(remote_url: str, home: Path):
+    from gitswarm.errors import InvalidState
+
+    hives = home / "hives"
+    hives.mkdir()
+    hives.chmod(0o500)
+    try:
+        with pytest.raises(InvalidState, match="cannot write hive home"):
+            Hive.init(remote_url, home)
+    finally:
+        hives.chmod(0o700)

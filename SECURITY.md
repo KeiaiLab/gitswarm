@@ -19,6 +19,14 @@ gitswarm stores its state in a git remote and runs `git` against it.
   - `created_at` (timezone required) and `ttl_s` (integer, bounded)
   - `--since` oid: 40 lowercase hex
   - file paths for `ws read` / `ws tree`: no absolute paths, no `..`
+  - remote URLs (`--remote`, `$GITSWARM_REMOTE`, cwd discovery, MCP `remote`,
+    `hive.toml`): only `ssh`, `git+ssh`, `https`, `http`, `git`, `file` URLs,
+    scp-style `[user@]host:path` or absolute paths; user `[A-Za-z0-9._~+-]`,
+    host `[A-Za-z0-9._-]` or a bracketed IPv6 literal (neither may start with
+    `-`), digits-only port, no `%`; no leading `-`, control characters or
+    `x::` transports. Credentials in the remote URL (`https://user:token@host`)
+    are refused; use a git credential helper. git also gets `--` before every
+    URL and ref.
 - **Deletes are leased.** Branch deletion is conditional on the last oid this
   host saw. `gc` never deletes a commit this host has not seen.
 - **Hooks are respected.** A server-side hook decline is a hard error, never

@@ -142,9 +142,20 @@ class Git:
         return p
 
     def _ssh_env(self) -> dict[str, str]:
-        """hive 별 ControlMaster 소켓을 거는 GIT_SSH_COMMAND. 호출자가 ssh 를 정했으면 그것이 이긴다."""
-        if self.ssh_override() or self.mux_problem():
+        """hive 별 ControlMaster 소켓을 거는 GIT_SSH_COMMAND. 호출자가 ssh 를 정했으면 그것이 이긴다.
+
+        소켓을 못 쓰면(경로 한도·`"`) 다중화만 빼고 keepalive 는 건다 — 벽시계 한도가 없는
+        fetch·push 의 멈춤을 끊는 것은 이것뿐이다.
+        """
+        if self.ssh_override():
             return {}
+        alive = (
+            f"-o ServerAliveInterval={SSH_ALIVE_INTERVAL_S}"
+            f" -o ServerAliveCountMax={SSH_ALIVE_COUNT_MAX}"
+            f" -o ConnectTimeout={SSH_CONNECT_TIMEOUT_S}"
+        )
+        if self.mux_problem():
+            return {"GIT_SSH_COMMAND": f"ssh {alive}"}
 
         control = self.repo / SSH_CONTROL_DIR
         socket = control / SSH_CONTROL_SOCKET
@@ -155,9 +166,7 @@ class Git:
         control_path = shlex.quote('ControlPath="' + path + '"')
         cmd = (
             f"ssh -o ControlMaster=auto -o {control_path} -o ControlPersist={SSH_CONTROL_PERSIST_S}"
-            f" -o ServerAliveInterval={SSH_ALIVE_INTERVAL_S}"
-            f" -o ServerAliveCountMax={SSH_ALIVE_COUNT_MAX}"
-            f" -o ConnectTimeout={SSH_CONNECT_TIMEOUT_S}"
+            f" {alive}"
         )
         return {"GIT_SSH_COMMAND": cmd}
 

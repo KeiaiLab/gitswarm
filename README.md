@@ -78,6 +78,8 @@ publish 는 조상 검사를 하지 않고 브랜치 tip 을 그대로 기록한
 엔드포인트는 계정 인증만 받는다). 따라서 `user` 는 토큰 발급만을 위한 전용 봇
 계정이어야 하고, 대상 org 의 멤버이며, 대상 레포에만 쓰기 권한을 가진다.
 
+원격 URL 에 자격을 넣은 꼴(`https://user:token@host`)은 거절한다 — git credential helper 를 쓴다.
+
 GitHub 토큰은 대상 레포로 한정된 App installation token 이며 1시간 유효하고 id 로 폐기할 수
 없다. App 은 설치된 레포에 `contents: write` 가 필요하다.
 

@@ -406,7 +406,7 @@ def test_double_quote_in_path_skips_multiplexing(tmp_path: Path, monkeypatch: py
     monkeypatch.delenv("GIT_SSH", raising=False)
     monkeypatch.setattr("gitswarm.driver.git.SOCKET_PATH_MAX", 4096)
     repo = Git.init_bare(tmp_path / 'q"x.git')
-    assert "GIT_SSH_COMMAND" not in _captured_env(monkeypatch, repo, "fetch")
+    _assert_alive_without_mux(_captured_env(monkeypatch, repo, "fetch"))
 
 
 def test_core_ssh_command_wins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -464,7 +464,15 @@ def test_long_hive_path_skips_multiplexing(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.delenv("GIT_SSH", raising=False)
     repo = Git(tmp_path / ("d" * 120))
     repo.repo.mkdir()
-    assert "GIT_SSH_COMMAND" not in _captured_env(monkeypatch, repo, "ls-remote")
+    _assert_alive_without_mux(_captured_env(monkeypatch, repo, "ls-remote"))
+
+
+def _assert_alive_without_mux(env: dict) -> None:
+    """다중화를 못 걸어도 gitswarm 이 ssh 를 정하면 keepalive 는 건다 — 멈춘 fetch 를 끊는 유일한 장치다."""
+    opts = shlex.split(env["GIT_SSH_COMMAND"])
+    assert any(o.startswith("ServerAliveInterval=") for o in opts)
+    assert any(o.startswith("ConnectTimeout=") for o in opts)
+    assert not any(o.startswith(("ControlMaster", "ControlPath", "ControlPersist")) for o in opts)
 
 
 def test_default_branch_reads_remote_head(repo: Git, remote_url: str, tmp_path: Path):

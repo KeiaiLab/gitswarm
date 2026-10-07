@@ -143,15 +143,20 @@ class Hive:
 
         # 호출마다 고유한 임시 자리에서 다 지은 뒤 잠금 안에서 rename 한 번
         #   — 최종 자리에는 완성본만 나타나고, 같은 프로세스의 스레드끼리도 서로를 지우지 않는다
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = Path(tempfile.mkdtemp(prefix=f"{TMP_PREFIX}{path.name}-", dir=path.parent))
+        tmp: Path | None = None
         try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = Path(tempfile.mkdtemp(prefix=f"{TMP_PREFIX}{path.name}-", dir=path.parent))
             _build(tmp, url)
             with _locked(path):
                 _sweep_stale(path, time.time())
                 _install(tmp, path)
+        except OSError as e:
+            # 권한·디스크 문제 — JSON 계약 안의 오류로(날 traceback 아님)
+            raise InvalidState(f"cannot write hive home: {type(e).__name__}") from None
         finally:
-            shutil.rmtree(tmp, ignore_errors=True)  # 옮겨졌으면 이미 없다
+            if tmp is not None:
+                shutil.rmtree(tmp, ignore_errors=True)  # 옮겨졌으면 이미 없다
         return cls.open(url, home)
 
     @classmethod
