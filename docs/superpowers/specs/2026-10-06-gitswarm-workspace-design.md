@@ -92,38 +92,61 @@ gitswarm/
 |---|---|---|
 | `hive init <url>` | bare 미러 생성·fetch | 예 |
 | `ws create --base <ref> [--agent] [--ttl] [--from-ws <id>] [--checkout]` | base oid 고정 → 브랜치 생성(from-ws 면 그 브랜치 tip 에서, parent 기록) → 원격 push → meta 기록. `--checkout` 이면 worktree 경로 반환 | 아니오(id 새로) |
-| `ws get <id>` · `ws list [--state]` | meta 조회 | 예 |
+| `ws get <id>` · `ws list [--state]` | meta 조회. list 는 `{workspaces, invalid:[{id, detail}]}` — 깨진 레코드는 건너뛰고 보고한다 | 예 |
 | `ws read <id> <path>` · `ws tree <id> [path]` | 체크아웃 없이 블롭·트리 읽기 | 예 |
-| `ws publish <id>` | worktree 의 커밋을 원격 브랜치로 push(`--force-with-lease`), state=published | 예 |
+| `ws publish <id>` | worktree 의 커밋을 원격 브랜치로 push(lease 기준 = §4.1 전용 ref), state=published | 예 |
 | `ws drop <id>` | 원격·로컬 브랜치, worktree 삭제, state=dropped, 토큰 revoke | 예 |
-| `ws gc` | `created_at + ttl_s < now` 인 open 을 drop | 예 |
+| `ws gc` | `created_at + ttl_s < now` 인 open 을 drop. `{expired, invalid}` 반환 | 예 |
 
-- `ttl_s` 기본 상수 `DEFAULT_TTL_S = 7200`. `0` 은 무기한.
+- `ttl_s` 기본 상수 `DEFAULT_TTL_S = 7200`. `0` 은 무기한. create 가 `0 ≤ ttl_s ≤ MAX_TTL_S(1년)` 를 검증한다.
+- 원격 meta 에서 읽은 값은 전부 검증하고, 깨진 레코드는 `InvalidState`(get) 또는 `invalid` 보고(list·gc)다 — 절대 traceback 이 아니다.
 - 격리 두 방식: 같은 호스트 = worktree 경로, 다른 호스트 = 브랜치 clone. 같은 `id` 로 다룬다.
 - `ws create` 반환: `{id, branch, base_oid, path|null, token|null}`. 토큰은 어댑터가 TOKEN
   capability 를 가질 때만 발급하고, 없으면 `null`(오류 아님).
 
 ## 4. 동시성 — CAS 로만 쓴다
 
-meta 쓰기 = `(경로, 새 내용)` 한 쌍의 **재적용 가능한 변경**. CAS 는 원격 push 의
-`--force-with-lease` 하나다. 로컬 `refs/heads/gitswarm/meta` 는 두지 않는다 — 로컬 bare 에는
-`refs/remotes/origin/gitswarm/meta`(원격 캐시)만 있고, 새 커밋은 oid 로 직접 push 한다.
+meta 쓰기 = **읽고-검증하고-쓰는 변환**(`Change(path, transform, subject)`,
+`transform: bytes | None → bytes`). CAS 는 원격 push 의 `--force-with-lease` 하나다. 로컬
+`refs/heads/gitswarm/meta` 는 두지 않는다 — 로컬 bare 에는 `refs/remotes/origin/gitswarm/meta`
+(원격 캐시)만 있고, 새 커밋은 oid 로 직접 push 한다.
 
 ```
-loop ≤ META_CAS_RETRIES(5):
+loop ≤ META_CAS_RETRIES(8):
   old  = fetch origin meta → refs/remotes/origin/gitswarm/meta 의 oid (없으면 빈 값)
-  tree = old.tree + 변경
+  prev = old 에서 path 의 현재 내용(없으면 None)
+  new_content = transform(prev)        ← 여기서 상태 전이를 다시 검증한다(§3 전이표)
+  tree = old.tree + (path, new_content)
   new  = commit-tree(tree, parent=old, msg="<종류> <id>")
   git push origin new:refs/heads/gitswarm/meta --force-with-lease=refs/heads/gitswarm/meta:old
-                                                      ← 거절이면 continue
+                                                      ← 거절이면 지터 지수 백오프 뒤 continue
   return
 raise Conflict
 ```
 
-잠금 파일·데몬 없음. 쓰기 주체가 몇이든(같은 호스트의 두 프로세스든 다른 호스트든) 원격
-ref 의 lease 하나에만 기댄다. 첫 meta 커밋은 부모 없는 고아 커밋이며 `old` 가 빈 값인
-lease(= "그 ref 가 없어야 한다")로 만든다. 같은 호스트 두 프로세스가 로컬 ref 를 서로
-덮어쓰는 경합은 로컬 ref 를 쓰지 않으므로 생기지 않는다.
+- **재적용은 덮어쓰기가 아니다.** 거절 뒤 재시도는 새 tip 의 레코드를 다시 읽어 전이를 다시
+  판정한다. 다른 호스트가 그 사이 `dropped` 로 바꿨으면 `publish` 는 `InvalidState` 로 끝난다.
+- 백오프: `CAS_BACKOFF_BASE_S = 0.05`, `CAS_BACKOFF_MAX_S = 1.0`, 지터 ×[0.5, 1.5]. 동시
+  작성자 N 이 상한보다 많아도 결정적으로 실패하지 않는다.
+- `create` 는 브랜치 push 뒤의 어떤 실패(meta `Conflict` 포함)에도 **보상**한다 — 만든 원격
+  브랜치·로컬 ref·토큰을 거두고 원래 예외를 올린다. 레코드 없는 고아 브랜치는 남지 않는다.
+- **삭제도 lease 로.** `drop`·`gc` 의 원격 브랜치 삭제는 마지막으로 본 oid 를 기대값으로 건다
+  (`--force-with-lease=<ref>:<seen> :<ref>`). 본 적 없는 커밋은 지우지 않는다(`Conflict`).
+- 잠금 파일·데몬 없음. 같은 호스트 형제 프로세스가 로컬 tracking ref 디렉터리를 두고 다투는
+  `cannot lock ref` 는 fetch 쪽에서 유한 재시도한다.
+
+### 4.1 publish 의 lease 기준 — 전용 ref
+
+`publish` 의 기대값은 `refs/gitswarm/lease/<id>` 다. 이 ref 는 **gitswarm 자신의 성공한
+push(create·publish)만** 갱신한다 — worktree 안의 `git fetch` 는 `refs/remotes/origin/*` 만
+움직이므로 기준을 흔들지 못한다. 거절되면 원격 oid 를 peek 해서 그것이 HEAD 의 조상이면(에이전트가
+`git pull --rebase` 를 했다는 뜻, 손실 없음이 증명됨) 그 oid 를 기대값으로 한 번 더 민다.
+아니면 `Conflict`.
+
+### 4.2 읽기는 기준을 건드리지 않는다
+
+`read`·`tree`·`--from-ws` 의 원격 조회는 `refs/gitswarm/peek/<short>` 로 가져온다. 어떤 읽기도
+lease 기준(§4.1)이나 tracking ref 를 움직이지 않는다.
 
 ## 5. 원격 어댑터와 토큰
 
