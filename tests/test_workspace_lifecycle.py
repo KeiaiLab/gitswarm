@@ -178,6 +178,7 @@ def test_from_json_ignores_unknown_keys():
         base_ref="refs/heads/main",
         base_oid="a",
         branch=ws_ref(FORGED_ID),
+        created_at="2026-01-01T00:00:00Z",
     )
     d = ws.to_dict() | {"future": 1}
     assert Workspace.from_json(json.dumps(d).encode()) == ws

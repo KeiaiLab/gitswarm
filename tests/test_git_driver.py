@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -5,6 +6,7 @@ import pytest
 from gitswarm.constants import tracking_ref
 from gitswarm.driver.git import Git
 from gitswarm.errors import RemoteError
+from tests.conftest import git
 
 
 @pytest.fixture
@@ -200,3 +202,20 @@ def test_is_lease_rejection_classification(stderr: str, expected: bool) -> None:
     from gitswarm.driver.git import is_lease_rejection
 
     assert is_lease_rejection(stderr) is expected
+
+
+def test_peek_does_not_move_tracking_ref(repo: Git, tmp_path: Path, remote_url: str):
+    ref = "refs/heads/main"
+    known = repo.fetch(ref)
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", remote_url, str(other)], check=True)
+    (other / "n.txt").write_text("n\n")
+    git("add", "n.txt", cwd=other)
+    git("commit", "-q", "-m", "n", cwd=other)
+    git("push", "-q", "origin", "HEAD:main", cwd=other)
+    moved = git("rev-parse", "HEAD", cwd=other)
+
+    assert repo.peek(ref) == moved
+    assert moved != known
+    assert repo.rev_parse(tracking_ref(ref)) == known
+    assert repo.peek("refs/heads/nope") is None

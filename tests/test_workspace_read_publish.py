@@ -1,3 +1,4 @@
+import json
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -5,10 +6,11 @@ from pathlib import Path
 import pytest
 
 from gitswarm.adapters.plain import PlainAdapter
+from gitswarm.constants import meta_path
 from gitswarm.errors import Conflict, InvalidState, NotFound
 from gitswarm.service.workspace import Checkout, WorkspaceService, WsState
 from gitswarm.store.hive import Hive
-from gitswarm.store.meta import MetaStore
+from gitswarm.store.meta import Change, MetaStore
 from tests.conftest import git
 
 
@@ -98,3 +100,46 @@ def test_gc_drops_expired_only(remote_url: str, home: Path):
     assert svc.get(old.id).state is WsState.DROPPED
     assert svc.get(forever.id).state is WsState.OPEN
     assert svc.gc() == []
+
+
+def test_read_does_not_move_publish_baseline(svc: WorkspaceService, tmp_path: Path):
+    r = svc.create("main", {}, 0, None, Checkout.WORKTREE, {})
+    other = tmp_path / "other"
+    branch = r.branch.removeprefix("refs/heads/")
+    subprocess.run(["git", "clone", "-q", "-b", branch, svc.hive.url, str(other)], check=True)
+    _commit_file(other, "theirs.txt", "x\n")
+    git("push", "-q", "origin", "HEAD", cwd=other)
+    theirs = git("rev-parse", "HEAD", cwd=other)
+
+    assert svc.read(r.id, "README.md") == b"seed\n"
+    _commit_file(Path(r.path), "mine.txt", "y\n")
+    with pytest.raises(Conflict):
+        svc.publish(r.id)
+    assert svc.hive.git.ls_remote(r.branch) == theirs
+
+
+def _forge_fields(svc: WorkspaceService, **over: object) -> str:
+    r = svc.create("main", {}, 60, None, Checkout.NONE, {})
+    d = json.loads(svc.store.read(meta_path(r.id))) | over
+    body = (json.dumps(d) + "\n").encode()
+    svc.store.apply(Change(meta_path(r.id), body, f"forge {r.id}"))
+    return r.id
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"created_at": "garbage"},
+        {"created_at": "2026-01-01T00:00:00"},
+        {"created_at": 5},
+        {"ttl_s": "7200"},
+        {"ttl_s": True},
+        {"ttl_s": -1},
+    ],
+)
+def test_forged_expiry_fields_fail_closed(svc: WorkspaceService, over: dict):
+    ws_id = _forge_fields(svc, **over)
+    with pytest.raises(InvalidState):
+        svc.get(ws_id)
+    with pytest.raises(InvalidState):
+        svc.gc()

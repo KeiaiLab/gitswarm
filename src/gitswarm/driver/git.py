@@ -7,7 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from gitswarm.constants import COMMIT_AUTHOR, COMMIT_EMAIL, tracking_ref
+from gitswarm.constants import COMMIT_AUTHOR, COMMIT_EMAIL, peek_ref, tracking_ref
 from gitswarm.errors import RemoteError
 
 RC_LS_REMOTE_MISSING = 2
@@ -118,6 +118,15 @@ class Git:
             return None
         self._run("fetch", "-q", "origin", f"+{ref}:{tracking_ref(ref)}")
         return self.rev_parse(tracking_ref(ref))
+
+    def peek(self, ref: str) -> str | None:
+        """원격 ref 를 peek ref 로 받아 oid 를 돌려준다. tracking ref 는 건드리지 않는다."""
+        if self.ls_remote(ref) is None:
+            self._run("update-ref", "-d", peek_ref(ref))
+            return None
+        # URL 로 받는다 — 이름 있는 remote 로 받으면 git 이 tracking ref 도 덩달아 갱신한다.
+        self._run("fetch", "-q", self.origin_url(), f"+{ref}:{peek_ref(ref)}")
+        return self.rev_parse(peek_ref(ref))
 
     def push(self, oid: str, ref: str, expected: str | None) -> bool:
         """lease push. expected=None 은 "원격에 그 ref 가 없어야 한다"."""

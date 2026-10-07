@@ -3,6 +3,7 @@
 REF_PREFIX = "gitswarm/"
 HEADS = "refs/heads/"
 TRACKING = "refs/remotes/origin/"
+PEEK = "refs/gitswarm/peek/"
 
 META_REF = f"{HEADS}{REF_PREFIX}meta"
 WS_DIR = "ws"  # meta 트리 안의 디렉터리: ws/<id>.json
@@ -30,6 +31,13 @@ def tracking_ref(ref: str) -> str:
     if not ref.startswith(HEADS):
         raise ValueError(f"not a branch ref: {ref}")
     return TRACKING + ref[len(HEADS) :]
+
+
+def peek_ref(ref: str) -> str:
+    """refs/heads/X → refs/gitswarm/peek/X. 읽기 전용 조회 자리(tracking 과 분리)."""
+    if not ref.startswith(HEADS):
+        raise ValueError(f"not a branch ref: {ref}")
+    return PEEK + ref[len(HEADS) :]
 
 
 def meta_path(ws_id: str) -> str:

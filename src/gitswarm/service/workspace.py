@@ -24,6 +24,7 @@ from gitswarm.constants import (
     HEADS,
     TTL_FOREVER,
     meta_path,
+    peek_ref,
     tracking_ref,
     ws_branch,
     ws_ref,
@@ -65,6 +66,18 @@ def _check_id(ws_id: str) -> str:
     if not ULID_RE.fullmatch(ws_id):
         raise NotFound(f"invalid workspace id: {ws_id!r}")
     return ws_id
+
+
+def _check_expiry(ws: Workspace) -> None:
+    ttl = ws.ttl_s
+    if not isinstance(ttl, int) or isinstance(ttl, bool) or ttl < 0:
+        raise InvalidState(f"{ws.id}: invalid ttl_s {ttl!r}")
+    try:
+        born = datetime.fromisoformat(ws.created_at.replace("Z", "+00:00"))
+    except (AttributeError, ValueError) as e:
+        raise InvalidState(f"{ws.id}: invalid created_at {ws.created_at!r}") from e
+    if born.tzinfo is None:
+        raise InvalidState(f"{ws.id}: created_at {ws.created_at!r} has no timezone")
 
 
 def utcnow() -> datetime:
@@ -110,6 +123,7 @@ class Workspace:
             )
         if ws.parent is not None:
             _check_id(ws.parent)
+        _check_expiry(ws)
         return ws
 
     def with_state(self, state: WsState) -> Workspace:
@@ -222,7 +236,7 @@ class WorkspaceService:
 
     # ── 읽기 ──────────────────────────────────────────────────
     def _published_rev(self, ws: Workspace) -> str:
-        oid = self.hive.git.fetch(ws.branch)
+        oid = self.hive.git.peek(ws.branch)
         if oid is None:
             raise NotFound(f"branch {ws.branch} not on remote")
         return oid
@@ -263,6 +277,8 @@ class WorkspaceService:
         self.hive.git.delete_remote(ws.branch)
         if self.hive.git.exists(ws.branch):
             self.hive.git.delete_ref(ws.branch)
+        if self.hive.git.exists(peek_ref(ws.branch)):
+            self.hive.git.delete_ref(peek_ref(ws.branch))
         if ws.token_id and Capability.TOKEN in self.adapter.capabilities():
             self.adapter.revoke_token(ws.token_id)
 
