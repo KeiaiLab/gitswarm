@@ -32,8 +32,9 @@ dependencies = [
 Homepage = "https://git.keiailab.com/keiailab-oss/gitswarm"
 Repository = "https://git.keiailab.com/keiailab-oss/gitswarm"
 Documentation = "https://git.keiailab.com/keiailab-oss/gitswarm/src/branch/stable/docs/ARCHITECTURE.md"
-Changelog = "https://git.keiailab.com/keiailab-oss/gitswarm/src/branch/stable/CHANGELOG.md"
-Issues = "https://git.keiailab.com/keiailab-oss/gitswarm/issues"
+Mirror = "https://github.com/KeiaiLab/gitswarm"
+Changelog = "https://github.com/KeiaiLab/gitswarm/blob/stable/CHANGELOG.md"
+Issues = "https://github.com/KeiaiLab/gitswarm/issues"
 
 [project.scripts]
 gitswarm = "gitswarm.surfaces.cli:main"

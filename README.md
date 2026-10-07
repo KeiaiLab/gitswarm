@@ -1,8 +1,8 @@
 # gitswarm
 
-[한국어](README.ko.md)
+[한국어](https://github.com/KeiaiLab/gitswarm/blob/stable/README.ko.md)
 
-Canonical repository: git.keiailab.com/keiailab-oss/gitswarm · mirror: github.com/KeiaiLab/gitswarm (issues welcome on either)
+Canonical repository: git.keiailab.com/keiailab-oss/gitswarm · mirror: github.com/KeiaiLab/gitswarm (issues: github.com/KeiaiLab/gitswarm/issues)
 
 gitswarm is a coordination layer over any git remote for many LLM agents
 working on the same repository at once. Each agent run gets an isolated
@@ -23,7 +23,7 @@ PyPI publication is pending. Until then, install from git:
 uvx --from git+https://github.com/KeiaiLab/gitswarm gitswarm --help
 ```
 
-Claude Code (details: [docs/recipes/claude-code.md](docs/recipes/claude-code.md)):
+Claude Code (details: [docs/recipes/claude-code.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/claude-code.md)):
 
 ```sh
 claude mcp add gitswarm -- uvx gitswarm mcp
@@ -117,7 +117,7 @@ Whoever coordinates the run drops the workspace with `ws drop`.
 `ws gc` reclaims only open workspaces past `ttl_s` whose branch has not
 moved since this host last saw it. It never touches published workspaces,
 and it reports an expired workspace that another host pushed to under
-`conflicted` instead of dropping it. Both need an explicit `ws drop <id>`. More: [docs/recipes/other-host.md](docs/recipes/other-host.md).
+`conflicted` instead of dropping it. Both need an explicit `ws drop <id>`. More: [docs/recipes/other-host.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/other-host.md).
 
 ## When publish says Conflict
 
@@ -249,8 +249,8 @@ tokens, is a member of the target org, and can write only the target
 repositories. The GitHub PEM can mint tokens for every repository the App
 is installed on; install it on the needed repositories only. GitHub
 installation tokens last one hour and cannot be revoked by id; `drop`
-prints their expiry to stderr. Setup: [forgejo-tokens.md](docs/recipes/forgejo-tokens.md),
-[github-app.md](docs/recipes/github-app.md).
+prints their expiry to stderr. Setup: [forgejo-tokens.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/forgejo-tokens.md),
+[github-app.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/github-app.md).
 
 **URLs:** credentials (userinfo) in http(s)/git URLs are refused — use a
 credential helper; ssh login names are fine. `https://user:token@host/…`
@@ -264,7 +264,7 @@ A workspace is not bound to the agent that created it. Anyone who can push
 record; the boundary is the remote's push ACL. Every value read from the
 meta branch is validated and fails closed. `ws drop` deletes unpublished
 commits on that branch, including other people's; `ws gc` never deletes a
-commit this host has not seen. Details: [SECURITY.md](SECURITY.md).
+commit this host has not seen. Details: [SECURITY.md](https://github.com/KeiaiLab/gitswarm/blob/stable/SECURITY.md).
 
 ## CI
 
@@ -279,7 +279,7 @@ on:
 ```
 
 Forgejo Actions and GitHub Actions use the same syntax.
-More: [docs/recipes/ci.md](docs/recipes/ci.md).
+More: [docs/recipes/ci.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/ci.md).
 
 ## Performance
 
@@ -306,7 +306,7 @@ budget is tight on a shared server, where a push sometimes takes seconds.
 
 ## Development
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The gate, as CI runs it:
+See [CONTRIBUTING.md](https://github.com/KeiaiLab/gitswarm/blob/stable/CONTRIBUTING.md). The gate, as CI runs it:
 
 ```sh
 uv sync --dev
@@ -316,8 +316,8 @@ uv run vulture src vulture_whitelist.py --min-confidence 60
 uv run pytest -q --cov          # coverage must be 100%
 ```
 
-Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
-[docs/superpowers/specs/](docs/superpowers/specs/). Changes: [CHANGELOG.md](CHANGELOG.md).
+Design: [docs/ARCHITECTURE.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/ARCHITECTURE.md); the design specs
+and plans live in the repository. Changes: [CHANGELOG.md](https://github.com/KeiaiLab/gitswarm/blob/stable/CHANGELOG.md).
 
 ## Roadmap
 

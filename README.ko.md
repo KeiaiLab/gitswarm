@@ -1,8 +1,8 @@
 # gitswarm
 
-[English](README.md)
+[English](https://github.com/KeiaiLab/gitswarm/blob/stable/README.md)
 
-정본 레포: git.keiailab.com/keiailab-oss/gitswarm · 미러: github.com/KeiaiLab/gitswarm (이슈는 어느 쪽이든 환영)
+정본 레포: git.keiailab.com/keiailab-oss/gitswarm · 미러: github.com/KeiaiLab/gitswarm (이슈: github.com/KeiaiLab/gitswarm/issues)
 
 gitswarm 은 여러 LLM 에이전트가 같은 레포를 동시에 다룰 때 쓰는, 임의 git 원격 위의 조율
 계층이다. 에이전트 실행마다 격리된 workspace 브랜치를 주고, 체크아웃 없이 서로의 작업을
@@ -21,7 +21,7 @@ PyPI 발행 전이다. 그때까지는 git 에서 설치한다:
 uvx --from git+https://github.com/KeiaiLab/gitswarm gitswarm --help
 ```
 
-Claude Code(자세히: [docs/recipes/claude-code.md](docs/recipes/claude-code.md)):
+Claude Code(자세히: [docs/recipes/claude-code.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/claude-code.md)):
 
 ```sh
 claude mcp add gitswarm -- uvx gitswarm mcp
@@ -112,7 +112,7 @@ $ gitswarm ws publish 01M4B3PT92MMV3BST3Q0JDNBR6
 본 뒤 브랜치가 움직이지 않은 open workspace 만 거둔다. published workspace 는 건드리지 않고,
 다른 호스트가 push 한 만료 workspace 는 거두지 않고 `conflicted` 로 보고한다. 둘 다 명시적
 `ws drop <id>` 가 필요하다.
-자세히: [docs/recipes/other-host.md](docs/recipes/other-host.md).
+자세히: [docs/recipes/other-host.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/other-host.md).
 
 ## publish 가 Conflict 를 내면
 
@@ -235,8 +235,8 @@ target = "~/.gitswarm/events.jsonl"
 엔드포인트는 계정 인증만 받는다. 토큰 발급만 하는 전용 봇 계정을 쓰고, 대상 org 의 멤버로,
 대상 레포에만 쓰기 권한을 준다. GitHub PEM 은 App 이 설치된 모든 레포의 토큰을 발급할 수
 있다 — 필요한 레포에만 설치한다. GitHub installation token 은 1시간 유효하고 id 로 폐기할 수
-없다 — `drop` 이 만료 시각을 stderr 에 적는다. 준비: [forgejo-tokens.md](docs/recipes/forgejo-tokens.md),
-[github-app.md](docs/recipes/github-app.md).
+없다 — `drop` 이 만료 시각을 stderr 에 적는다. 준비: [forgejo-tokens.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/forgejo-tokens.md),
+[github-app.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/github-app.md).
 
 **URL:** http(s)/git URL 안의 자격(userinfo)은 거절한다 — credential helper 를 쓴다. ssh 로그인
 이름은 괜찮다. `https://user:token@host/…`·`https://token@host/…` 는 `InvalidState`(오류에는
@@ -248,7 +248,7 @@ workspace 는 만든 에이전트에 묶이지 않는다. `refs/heads/gitswarm/*
 어떤 workspace 든 발행·폐기하고 어떤 레코드든 고쳐 쓸 수 있다 — 경계는 원격의 push ACL 이다.
 meta 브랜치에서 읽은 값은 전부 검증하고 fail-closed 한다. `ws drop` 은 그 브랜치의 발행 안 된
 커밋(남의 것 포함)까지 지우고, `ws gc` 는 이 호스트가 본 적 없는 커밋을 절대 지우지 않는다.
-자세히: [SECURITY.md](SECURITY.md).
+자세히: [SECURITY.md](https://github.com/KeiaiLab/gitswarm/blob/stable/SECURITY.md).
 
 ## CI
 
@@ -262,7 +262,7 @@ on:
       - "gitswarm/**"
 ```
 
-Forgejo Actions 와 GitHub Actions 가 같은 문법이다. 자세히: [docs/recipes/ci.md](docs/recipes/ci.md).
+Forgejo Actions 와 GitHub Actions 가 같은 문법이다. 자세히: [docs/recipes/ci.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/ci.md).
 
 ## 성능
 
@@ -287,7 +287,7 @@ Forgejo Actions 와 GitHub Actions 가 같은 문법이다. 자세히: [docs/rec
 
 ## 개발
 
-[CONTRIBUTING.md](CONTRIBUTING.md). CI 와 같은 게이트:
+[CONTRIBUTING.md](https://github.com/KeiaiLab/gitswarm/blob/stable/CONTRIBUTING.md). CI 와 같은 게이트:
 
 ```sh
 uv sync --dev
@@ -297,8 +297,8 @@ uv run vulture src vulture_whitelist.py --min-confidence 60
 uv run pytest -q --cov          # 커버리지 100% 필수
 ```
 
-설계: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/superpowers/specs/](docs/superpowers/specs/).
-변경 이력: [CHANGELOG.md](CHANGELOG.md).
+설계: [docs/ARCHITECTURE.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/ARCHITECTURE.md). 설계 스펙·계획은 레포 안에 있다.
+변경 이력: [CHANGELOG.md](https://github.com/KeiaiLab/gitswarm/blob/stable/CHANGELOG.md).
 
 ## 로드맵
 
