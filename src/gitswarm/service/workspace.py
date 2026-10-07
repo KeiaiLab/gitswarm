@@ -282,6 +282,11 @@ class WorkspaceService:
         self.sinks = sinks or []
         self.clock = clock
 
+    @property
+    def url(self) -> str:
+        """이 서비스가 쓰는 원격 URL(hive 에 기록된 것)."""
+        return self.hive.url
+
     # ── 조회 ──────────────────────────────────────────────────
     def get(self, ws_id: str) -> Workspace:
         _check_id(ws_id)

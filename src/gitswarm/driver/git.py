@@ -22,6 +22,7 @@ from gitswarm.constants import (
 from gitswarm.errors import RemoteError
 
 RC_LS_REMOTE_MISSING = 2
+RC_NO_SUCH_REMOTE = 2
 RC_FATAL = 128
 # Four wordings measured on git 2.55: sequential stale lease; server-side race on update; server-side race on create.
 # Any "cannot lock ref" server message is lock contention with a sibling writer; the CAS loop re-fetches and retries.
@@ -158,6 +159,13 @@ class Git:
 
     def origin_url(self) -> str:
         return self._out("remote", "get-url", "origin")
+
+    def remote_url(self, name: str) -> str | None:
+        """이름 있는 remote 의 URL. 레포 밖이거나(128) 그 remote 가 없으면(2) None."""
+        p = self._run("remote", "get-url", name, ok_rc=(0, RC_NO_SUCH_REMOTE, RC_FATAL))
+        if p.returncode != 0:
+            return None
+        return p.stdout.decode().strip()
 
     def ls_remote(self, ref: str) -> str | None:
         p = self._run(

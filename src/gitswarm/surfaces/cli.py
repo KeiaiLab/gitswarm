@@ -15,9 +15,16 @@ from typer._click.exceptions import UsageError as ClickUsageError
 
 from gitswarm.constants import DEFAULT_TTL_S
 from gitswarm.errors import EXIT_CODES, GitswarmError
-from gitswarm.service.workspace import Checkout, WsState, open_service
+from gitswarm.service.workspace import Checkout, WsState
 from gitswarm.store.hive import Hive, resolve_home
-from gitswarm.surfaces.common import agent_dict, read_payload, usage_payload
+from gitswarm.surfaces.common import (
+    UsageError,
+    agent_dict,
+    read_payload,
+    service,
+    usage_payload,
+    with_remote,
+)
 
 REMOTE_ENV = "GITSWARM_REMOTE"
 EXIT_USAGE = 1
@@ -39,12 +46,6 @@ def _emit(payload: dict) -> None:
     typer.echo(json.dumps({"ok": True, **payload}, ensure_ascii=False))
 
 
-def _remote(remote: str | None) -> str:
-    if remote:
-        return remote
-    raise ClickUsageError(f"--remote or ${REMOTE_ENV} required")
-
-
 def _parse_labels(items: list[str]) -> dict:
     labels = {}
     for item in items:
@@ -56,7 +57,7 @@ def _parse_labels(items: list[str]) -> dict:
 
 
 def guarded(fn):
-    """GitswarmError → JSON + 종료코드. 그 밖의 예외는 그대로(버그는 숨기지 않는다)."""
+    """GitswarmError·Usage → JSON + 종료코드. 그 밖의 예외는 그대로(버그는 숨기지 않는다)."""
 
     @wraps(fn)
     def inner(*args, **kwargs):
@@ -65,12 +66,11 @@ def guarded(fn):
         except GitswarmError as e:
             typer.echo(json.dumps(e.to_payload(), ensure_ascii=False))
             raise typer.Exit(EXIT_CODES[e.kind]) from None
+        except UsageError as e:
+            typer.echo(json.dumps(usage_payload(str(e)), ensure_ascii=False))
+            raise typer.Exit(EXIT_USAGE) from None
 
     return inner
-
-
-def _svc(remote: str | None):
-    return open_service(_remote(remote), resolve_home())
 
 
 # ── hive ─────────────────────────────────────────────────────
@@ -97,14 +97,16 @@ def ws_create(
     agent_info = agent_dict(agent, run)
     labels = _parse_labels(label or [])
     mode = Checkout.WORKTREE if checkout else Checkout.NONE
-    r = _svc(remote).create(base, agent_info, ttl, from_ws, mode, labels)
-    _emit(r.to_dict())
+    svc = service(remote)
+    r = svc.create(base, agent_info, ttl, from_ws, mode, labels)
+    _emit(with_remote(svc, r.to_dict()))
 
 
 @ws_app.command("get")
 @guarded
 def ws_get(ws_id: str, remote: RemoteOpt = None) -> None:
-    _emit(_svc(remote).get(ws_id).to_dict())
+    svc = service(remote)
+    _emit(with_remote(svc, svc.get(ws_id).to_dict()))
 
 
 @ws_app.command("list")
@@ -113,15 +115,16 @@ def ws_list(
     remote: RemoteOpt = None,
     state: Annotated[WsState | None, typer.Option("--state")] = None,
 ) -> None:
-    good, invalid = _svc(remote).list_report(state)
-    _emit({"workspaces": [w.to_dict() for w in good], "invalid": invalid})
+    svc = service(remote)
+    good, invalid = svc.list_report(state)
+    _emit(with_remote(svc, {"workspaces": [w.to_dict() for w in good], "invalid": invalid}))
 
 
 @ws_app.command("read")
 @guarded
 def ws_read(ws_id: str, path: str, remote: RemoteOpt = None) -> None:
-    data = _svc(remote).read(ws_id, path)
-    _emit(read_payload(path, data))
+    svc = service(remote)
+    _emit(with_remote(svc, read_payload(path, svc.read(ws_id, path))))
 
 
 @ws_app.command("tree")
@@ -129,25 +132,29 @@ def ws_read(ws_id: str, path: str, remote: RemoteOpt = None) -> None:
 def ws_tree(
     ws_id: str, path: Annotated[str, typer.Argument()] = "", remote: RemoteOpt = None
 ) -> None:
-    _emit({"path": path, "entries": _svc(remote).tree(ws_id, path)})
+    svc = service(remote)
+    _emit(with_remote(svc, {"path": path, "entries": svc.tree(ws_id, path)}))
 
 
 @ws_app.command("publish")
 @guarded
 def ws_publish(ws_id: str, remote: RemoteOpt = None) -> None:
-    _emit({"id": ws_id, "oid": _svc(remote).publish(ws_id)})
+    svc = service(remote)
+    _emit(with_remote(svc, {"id": ws_id, "oid": svc.publish(ws_id)}))
 
 
 @ws_app.command("drop")
 @guarded
 def ws_drop(ws_id: str, remote: RemoteOpt = None) -> None:
-    _emit(_svc(remote).drop(ws_id).to_dict())
+    svc = service(remote)
+    _emit(with_remote(svc, svc.drop(ws_id).to_dict()))
 
 
 @ws_app.command("gc")
 @guarded
 def ws_gc(remote: RemoteOpt = None) -> None:
-    _emit(_svc(remote).gc())
+    svc = service(remote)
+    _emit(with_remote(svc, svc.gc()))
 
 
 # ── events ───────────────────────────────────────────────────
@@ -156,7 +163,8 @@ def ws_gc(remote: RemoteOpt = None) -> None:
 def events_tail(
     remote: RemoteOpt = None, since: Annotated[str | None, typer.Option("--since")] = None
 ) -> None:
-    _emit({"events": [e.to_dict() for e in _svc(remote).events(since)]})
+    svc = service(remote)
+    _emit(with_remote(svc, {"events": [e.to_dict() for e in svc.events(since)]}))
 
 
 # ── mcp ──────────────────────────────────────────────────────

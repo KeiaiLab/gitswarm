@@ -66,7 +66,14 @@ def test_lifecycle_via_cli(inited: str):
     assert code == 0 and out["state"] == "dropped"
 
     code, out = run("ws", "gc", remote=inited)
-    assert code == 0 and out == {"ok": True, "expired": [], "invalid": [], "conflicted": []}
+    assert code == 0
+    assert out == {
+        "ok": True,
+        "expired": [],
+        "invalid": [],
+        "conflicted": [],
+        "remote": inited,
+    }
 
 
 def test_error_exit_codes(inited: str):
@@ -210,3 +217,50 @@ def test_tree_takes_path_as_positional_argument(inited: str):
     code, out = run("ws", "tree", ws_id, "dogfood", remote=inited)
     assert code == 0 and out["path"] == "dogfood"
     assert [e["name"] for e in out["entries"]] == ["a.md"]
+
+
+def run_here(*args: str) -> tuple[int, dict]:
+    """--remote·env 없이 — cwd 로 원격을 찾게 한다."""
+    res = runner.invoke(app, [*args], env={"GITSWARM_REMOTE": None})
+    return res.exit_code, json.loads(res.stdout.strip().splitlines()[-1])
+
+
+def test_every_success_line_names_the_remote(inited: str):
+    _, out = run("ws", "create", "--base", "main", "--checkout", remote=inited)
+    ws_id, wt = out["id"], Path(out["path"])
+    assert out["remote"] == inited
+    git("commit", "-q", "--allow-empty", "-m", "e", cwd=wt)
+    for argv in (
+        ("ws", "get", ws_id),
+        ("ws", "list"),
+        ("ws", "read", ws_id, "README.md"),
+        ("ws", "tree", ws_id),
+        ("ws", "publish", ws_id),
+        ("events", "tail"),
+        ("ws", "drop", ws_id),
+        ("ws", "gc"),
+    ):
+        code, out = run(*argv, remote=inited)
+        assert code == 0 and out["remote"] == inited, argv
+
+
+def test_remote_discovered_in_clone(inited: str, tmp_path: Path, monkeypatch):
+    clone = tmp_path / "clone"
+    git("clone", "-q", inited, str(clone), cwd=tmp_path)
+    monkeypatch.chdir(clone)
+    code, out = run_here("ws", "create", "--base", "main")
+    assert code == 0 and out["remote"] == inited
+
+
+def test_remote_discovered_in_worktree(inited: str, monkeypatch):
+    _, out = run("ws", "create", "--base", "main", "--checkout", remote=inited)
+    monkeypatch.chdir(out["path"])
+    code, got = run_here("ws", "get", out["id"])
+    assert code == 0 and got["id"] == out["id"] and got["remote"] == inited
+
+
+def test_no_remote_outside_repo_is_usage(monkeypatch, capsys, home: Path):
+    code, stdout = main_cli(monkeypatch, capsys, "ws", "list")
+    payload = json.loads(stdout.strip())
+    assert code == 1 and payload["error"]["kind"] == "Usage"
+    assert "--remote" in payload["error"]["detail"]

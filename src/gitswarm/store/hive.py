@@ -40,6 +40,20 @@ def hive_id(url: str) -> str:
     return hashlib.sha256(normalize_url(url).encode()).hexdigest()[:HIVE_ID_LEN]
 
 
+def _stored_url(hive_file: Path) -> str:
+    return tomllib.loads(hive_file.read_text())["url"]
+
+
+def worktree_owner(path: Path, home: Path) -> str | None:
+    """path 가 어떤 hive 의 wt/<id> 아래면 그 hive 의 URL. wt/ 자체는 worktree 가 아니다."""
+    where = path.resolve()
+    for hive_file in (home / HIVES_DIR).glob(f"*/{HIVE_FILE}"):
+        wt_root = (hive_file.parent / WT_DIR).resolve()
+        if where != wt_root and where.is_relative_to(wt_root):
+            return _stored_url(hive_file)
+    return None
+
+
 @dataclass(frozen=True)
 class Hive:
     path: Path
@@ -70,7 +84,7 @@ class Hive:
         path = home / HIVES_DIR / hive_id(url)
         if not (path / HIVE_FILE).exists():
             raise NotFound(f"hive not initialized for {url}; run `gitswarm hive init`")
-        stored = tomllib.loads((path / HIVE_FILE).read_text())["url"]
+        stored = _stored_url(path / HIVE_FILE)
         return cls(path, stored, Git(path / REPO_DIR))
 
     def worktree_dir(self, ws_id: str) -> Path:

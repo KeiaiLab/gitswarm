@@ -91,6 +91,7 @@ def test_tree_and_gc(remote_url: str, home: Path):
         "expired": [],
         "invalid": [],
         "conflicted": [],
+        "remote": remote_url,
     }
 
 
@@ -138,3 +139,41 @@ def test_events_tail_bad_since_is_payload(remote_url: str, home: Path):
     call("hive_init", url=remote_url)
     out = call("events_tail", remote=remote_url, since="bogus")
     assert out["ok"] is False and out["error"]["kind"] == "NotFound"
+
+
+def test_remote_is_optional_and_discovered(
+    remote_url: str, home: Path, tmp_path: Path, monkeypatch
+):
+    call("hive_init", url=remote_url)
+    clone = tmp_path / "clone"
+    git("clone", "-q", remote_url, str(clone), cwd=tmp_path)
+    monkeypatch.chdir(clone)
+    r = call("workspace_create", base_ref="main")
+    assert r["ok"] is True and r["remote"] == remote_url
+    got = call("workspace_get", ws_id=r["id"])
+    assert got["ok"] is True and got["remote"] == remote_url
+
+
+def test_no_remote_outside_repo_is_usage_payload(home: Path):
+    out = call("workspace_list")
+    assert out["ok"] is False and out["error"]["kind"] == "Usage"
+
+
+def test_every_tool_names_the_remote(remote_url: str, home: Path):
+    call("hive_init", url=remote_url)
+    r = _create(remote_url, checkout=True)
+    assert r["remote"] == remote_url
+    commit(Path(r["path"]))
+    ws = {"ws_id": r["id"]}
+    for name, args in (
+        ("workspace_get", ws),
+        ("workspace_list", {}),
+        ("workspace_read_file", {**ws, "path": "README.md"}),
+        ("workspace_tree", ws),
+        ("workspace_publish", ws),
+        ("events_tail", {}),
+        ("workspace_drop", ws),
+        ("workspace_gc", {}),
+    ):
+        out = call(name, remote=remote_url, **args)
+        assert out["ok"] is True and out["remote"] == remote_url, name

@@ -76,3 +76,11 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     h.mkdir()
     monkeypatch.setenv("GITSWARM_HOME", str(h))
     return h
+
+
+@pytest.fixture(autouse=True)
+def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """원격 자동 발견이 이 레포(cwd)·사용자 홈·셸 env 를 집지 않게 한다."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITSWARM_REMOTE", raising=False)
+    monkeypatch.setenv("GITSWARM_HOME", str(tmp_path / "default-home"))

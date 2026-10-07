@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 
-from gitswarm.service.workspace import WsState
+from gitswarm.service.discovery import discover_remote
+from gitswarm.service.workspace import WorkspaceService, WsState, open_service
+from gitswarm.store.hive import resolve_home
 
 USAGE_KIND = "Usage"
+NO_REMOTE = (
+    "no remote: pass --remote (MCP: remote), set $GITSWARM_REMOTE, "
+    "or run inside a git repo with an origin"
+)
 
 
 class UsageError(ValueError):
@@ -38,3 +45,22 @@ def parse_state(state: str | None) -> WsState | None:
         raise UsageError(
             f"invalid state {state!r}; expected one of {[s.value for s in WsState]}"
         ) from None
+
+
+def resolve_remote(remote: str | None) -> str:
+    """주어진 원격, 없으면 cwd 로 찾은 원격. 둘 다 없으면 Usage."""
+    if remote:
+        return remote
+    found = discover_remote(Path.cwd(), resolve_home())
+    if found is None:
+        raise UsageError(NO_REMOTE)
+    return found
+
+
+def service(remote: str | None) -> WorkspaceService:
+    return open_service(resolve_remote(remote), resolve_home())
+
+
+def with_remote(svc: WorkspaceService, payload: dict) -> dict:
+    """성공 결과에 실제로 쓴 원격을 싣는다 — 자동 발견이 무엇을 골랐는지 호출자가 본다."""
+    return {**payload, "remote": svc.url}
