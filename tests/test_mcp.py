@@ -198,3 +198,9 @@ def test_mcp_from_ws_skips_base_lookup(remote_url: str, home: Path, tmp_path: Pa
     git("symbolic-ref", "HEAD", "refs/heads/gone", cwd=tmp_path / "remote.git")
     c = call("workspace_create", remote=remote_url, from_ws=p["id"])
     assert c["ok"] is True
+
+
+def test_mcp_create_gives_clone_command(remote_url: str, home: Path):
+    r = call("workspace_create", remote=remote_url)
+    assert r["branch_name"] == f"gitswarm/ws/{r['id']}"
+    assert r["clone"] == f"git clone -b gitswarm/ws/{r['id']} {remote_url}"

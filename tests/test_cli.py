@@ -1,5 +1,6 @@
 import base64
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -81,7 +82,11 @@ def test_error_exit_codes(inited: str):
     assert code == 2
     assert out == {
         "ok": False,
-        "error": {"kind": "NotFound", "detail": "workspace 01J00000000000000000000000 not found"},
+        "error": {
+            "kind": "NotFound",
+            "detail": "workspace 01J00000000000000000000000 not found; "
+            "`gitswarm ws list` shows ids",
+        },
     }
 
 
@@ -288,3 +293,33 @@ def test_no_remote_outside_repo_is_usage(monkeypatch, capsys, home: Path):
     payload = json.loads(stdout.strip())
     assert code == 1 and payload["error"]["kind"] == "Usage"
     assert "--remote" in payload["error"]["detail"]
+
+
+def test_create_gives_a_working_clone_command(inited: str, tmp_path: Path):
+    code, out = run("ws", "create", remote=inited)
+    assert code == 0
+    assert out["branch_name"] == f"gitswarm/ws/{out['id']}"
+    assert out["clone"] == f"git clone -b {out['branch_name']} {inited}"
+    git(*shlex.split(out["clone"])[1:], "c", cwd=tmp_path)
+    assert (tmp_path / "c" / "README.md").exists()
+
+
+@pytest.mark.parametrize(
+    "argv,hint",
+    [
+        (("ws", "create", "--base", "nope"), "pass an existing branch as --base"),
+        (("ws", "get", "01J00000000000000000000000"), "`gitswarm ws list` shows ids"),
+    ],
+)
+def test_frequent_errors_name_the_next_step(inited: str, argv, hint: str):
+    code, out = run(*argv, remote=inited)
+    assert code == 2 and hint in out["error"]["detail"]
+
+
+def test_publish_errors_name_the_next_step(inited: str):
+    _, out = run("ws", "create", remote=inited)
+    code, err = run("ws", "publish", out["id"], remote=inited)
+    assert code == 4 and "commit and push to the branch first" in err["error"]["detail"]
+    run("ws", "drop", out["id"], remote=inited)
+    code, err = run("ws", "publish", out["id"], remote=inited)
+    assert code == 4 and "create a new workspace" in err["error"]["detail"]

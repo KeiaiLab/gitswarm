@@ -390,3 +390,21 @@ def test_drop_revokes_even_without_token_capability(remote_url: str, home: Path,
 def test_open_service_creates_missing_hive(remote_url: str, home: Path):
     assert open_service(remote_url, home).list(None) == []
     assert open_service(remote_url, home).hive.path == Hive.open(remote_url, home).path
+
+
+def test_create_result_names_branch_and_clone(svc: WorkspaceService):
+    r = svc.create("main", {}, 0, None, Checkout.NONE, {})
+    assert r.branch_name == f"gitswarm/ws/{r.id}"
+    assert r.clone == f"git clone -b {r.branch_name} {svc.url}"
+
+
+def test_clone_command_quotes_odd_urls(tmp_path: Path, home: Path):
+    from tests.conftest import git as g
+
+    bare = tmp_path / "a b.git"
+    g("init", "--bare", "-q", "-b", "main", str(bare), cwd=tmp_path)
+    g("clone", "-q", str(bare), str(tmp_path / "w"), cwd=tmp_path)
+    g("commit", "-q", "--allow-empty", "-m", "s", cwd=tmp_path / "w")
+    g("push", "-q", "origin", "HEAD", cwd=tmp_path / "w")
+    r = open_service(str(bare), home).create("main", {}, 0, None, Checkout.NONE, {})
+    assert r.clone.endswith(f"'{bare}'")

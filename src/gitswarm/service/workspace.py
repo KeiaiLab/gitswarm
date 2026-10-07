@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields, replace
@@ -49,7 +50,9 @@ EV_PUBLISHED = "ws.published"
 EV_DROPPED = "ws.dropped"
 EV_EXPIRED = "ws.expired"
 
-NOTHING_PUBLISHED = "nothing published: branch is still at base"
+NOTHING_PUBLISHED = (
+    "nothing published: branch is still at base; commit and push to the branch first"
+)
 
 REQUIRED_STR_FIELDS = ("id", "base_ref", "base_oid", "branch")
 OPTIONAL_STR_FIELDS = ("parent", "token_id", "published_oid")
@@ -79,6 +82,10 @@ TRANSITIONS: dict[WsState, frozenset[WsState]] = {
     WsState.PUBLISHED: frozenset({WsState.PUBLISHED, WsState.DROPPED}),
     WsState.DROPPED: frozenset({WsState.DROPPED}),
 }
+
+
+def _no_workspace(ws_id: str) -> str:
+    return f"workspace {ws_id} not found; `gitswarm ws list` shows ids"
 
 
 def _check_id(ws_id: str) -> str:
@@ -185,7 +192,12 @@ class Workspace:
 
     def with_state(self, state: WsState) -> Workspace:
         if state not in TRANSITIONS[self.state]:
-            raise InvalidState(f"{self.id}: {self.state.value} → {state.value} not allowed")
+            hint = (
+                "; dropped is final — create a new workspace"
+                if self.state is WsState.DROPPED
+                else ""
+            )
+            raise InvalidState(f"{self.id}: {self.state.value} → {state.value} not allowed{hint}")
         return Workspace(**{**asdict(self), "state": state})
 
 
@@ -193,9 +205,11 @@ class Workspace:
 class CreateResult:
     id: str
     branch: str
+    branch_name: str  # clone·checkout 이 받는 짧은 이름: gitswarm/ws/<id>
     base_oid: str
     path: str | None
     token: str | None
+    clone: str  # 다른 호스트가 그대로 실행할 명령
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -230,7 +244,7 @@ def _raw_dict(data: bytes | None) -> dict:
 def _salvage(ws_id: str, prev: bytes | None, now: datetime) -> Workspace:
     """강제 drop 이 쓰는 레코드. 유효한 필드만 옮기고 나머지는 기본값, 만료 필드는 새로."""
     if prev is None:
-        raise NotFound(f"workspace {ws_id} not found")
+        raise NotFound(_no_workspace(ws_id))
     try:
         return _parse_record(ws_id, prev).with_state(WsState.DROPPED)
     except InvalidState:
@@ -296,7 +310,7 @@ class WorkspaceService:
         _check_id(ws_id)
         data = self.store.read(meta_path(ws_id))
         if data is None:
-            raise NotFound(f"workspace {ws_id} not found")
+            raise NotFound(_no_workspace(ws_id))
         return _parse_record(ws_id, data)
 
     def list(self, state: WsState | None) -> list[Workspace]:
@@ -344,7 +358,7 @@ class WorkspaceService:
         # peek: oid 만 필요하다 — tracking 을 옮기면 부모의 발행 기준이 남의 커밋으로 바뀐다
         base_oid = self.hive.git.peek(src_ref)
         if base_oid is None:
-            raise NotFound(f"base ref {src_ref} not on remote")
+            raise NotFound(f"base ref {src_ref} not on remote; pass an existing branch as --base")
 
         ws_id = str(ULID())
         branch = ws_ref(ws_id)
@@ -381,7 +395,17 @@ class WorkspaceService:
             wt = self.hive.worktree_dir(ws_id)
             self.hive.git.worktree_add(wt, ws_branch(ws_id))
             path = str(wt)
-        return CreateResult(ws_id, branch, base_oid, path, token[1] if token else None)
+        name = ws_branch(ws_id)
+        clone = f"git clone -b {name} {shlex.quote(self.hive.url)}"
+        return CreateResult(
+            id=ws_id,
+            branch=branch,
+            branch_name=name,
+            base_oid=base_oid,
+            path=path,
+            token=token[1] if token else None,
+            clone=clone,
+        )
 
     def _undo_create(self, branch: str, token: tuple[str, str] | None) -> None:
         """create 보상. 각 단계는 실패해도 다음 단계로 간다 — 원래 오류를 가리지 않는다."""
@@ -641,7 +665,7 @@ class WorkspaceService:
 
         def build(prev: bytes | None) -> Workspace:
             if prev is None:
-                raise NotFound(f"workspace {ws_id} not found")
+                raise NotFound(_no_workspace(ws_id))
             return mutate(Workspace.from_json(prev))
 
         return self._record(ws_id, kind, build)
