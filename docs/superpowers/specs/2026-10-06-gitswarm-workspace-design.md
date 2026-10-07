@@ -180,3 +180,10 @@ MCP 는 `{ok:false, error:{kind, detail}}`. 모호하면 오류 — 추측해서
 ## 10. 범위 밖(A)
 
 B intent · C landing · GitHub 어댑터 · 이벤트 재시도 큐 · 로컬 조회 캐시(필요해지면 §2 위에 얹는다).
+
+**권한 경계(명시)**: A 는 workspace 를 만든 에이전트에게 소유권을 묶지 않는다.
+`refs/heads/gitswarm/*` 에 push 할 수 있는 주체는 누구나 어느 workspace 든 publish·drop 할
+수 있다. 경계는 **원격의 push ACL** 이고, Forgejo 어댑터의 레포 한정 토큰이 호스트 단위로
+그것을 좁힌다. 에이전트별 소유·승인은 C(landing)의 주제다. 원격 meta 에서 읽은 값은 전부
+검증한다(id 알파벳·branch 재계산·created_at/ttl_s 형식·since oid) — 통과 못 하면
+`InvalidState`/`NotFound` 로 fail-closed.
