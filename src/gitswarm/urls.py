@@ -16,9 +16,16 @@ from gitswarm.errors import InvalidState
 
 ALLOWED_SCHEMES = frozenset({"ssh", "git+ssh", "https", "http", "git", "file"})
 SSH_SCHEMES = frozenset({"ssh", "git+ssh"})
+LOCAL_SCHEME = "file"  # authority 가 비어도 되는 유일한 scheme(file:///abs)
 SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(.*)$", re.DOTALL)
 TRANSPORT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*::")  # ext::, fd:: …
-SCP_RE = re.compile(r"^(?:([^@/]*)@)?([^@/:]+):(.+)$", re.DOTALL)
+
+# host 검사를 ssh 에 맡기지 않는다(옵션 모양 host 거절은 OpenSSH 9.6+ 에만 있다) —
+# 글자 집합을 좁히고 `-` 로 시작하지 못하게 한다. `%`·`:`·`;`·공백은 어디에도 없다.
+USER = r"[A-Za-z0-9._~+][A-Za-z0-9._~+-]*"
+HOST = r"(?:[A-Za-z0-9._][A-Za-z0-9._-]*|\[[0-9A-Fa-f:.]+\])"
+AUTHORITY_RE = re.compile(rf"^(?:{USER}@)?{HOST}(?::[0-9]+)?$")
+SCP_RE = re.compile(rf"^(?:{USER}@)?({HOST}):(.+)$", re.DOTALL)
 OPTION_MARK = "-"
 DEL = 0x7F
 FIRST_PRINTABLE = 0x20
@@ -28,33 +35,39 @@ def _refuse(url: object) -> InvalidState:
     return InvalidState(f"invalid remote url: {url!r}")
 
 
-def _host_of_authority(rest: str) -> str:
-    """scheme:// 뒤 authority 의 host 부분(user@ 를 뗀 것)."""
-    authority = rest.split("/", 1)[0]
-    return authority.rpartition("@")[2]
+def _printable_utf8(url: str) -> bool:
+    """제어 문자 없음 + UTF-8 로 인코딩 가능(lone surrogate 거절)."""
+    try:
+        url.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return not any(ord(c) < FIRST_PRINTABLE or ord(c) == DEL for c in url)
 
 
 def validate_remote_url(url: str) -> str:
     """허용된 모양이면 그대로 돌려준다. 아니면 InvalidState."""
     if not isinstance(url, str) or not url or url.startswith(OPTION_MARK):
         raise _refuse(url)
-    if any(ord(c) < FIRST_PRINTABLE or ord(c) == DEL for c in url):
-        raise _refuse(url)
-    if TRANSPORT_RE.match(url):
+    if not _printable_utf8(url) or TRANSPORT_RE.match(url):
         raise _refuse(url)
 
-    # scheme://
+    # scheme://authority/path — authority 는 user@host:port 만
     m = SCHEME_RE.match(url)
     if m:
-        scheme, rest = m.groups()
-        if scheme.lower() not in ALLOWED_SCHEMES or _host_of_authority(rest).startswith("-"):
+        scheme, rest = m.group(1).lower(), m.group(2)
+        authority = rest.split("/", 1)[0]
+        if scheme not in ALLOWED_SCHEMES:
+            raise _refuse(url)
+        if authority == "" and scheme == LOCAL_SCHEME:
+            return url
+        if not AUTHORITY_RE.match(authority):
             raise _refuse(url)
         return url
 
     if url.startswith("/"):
         return url
 
-    # scp 꼴 — host 가 옵션 모양이면 ssh 인자로 읽힐 수 있다
+    # scp 꼴 [user@]host:path — path 가 `-` 로 시작하면 원격 쪽 인자로 읽힐 수 있다
     scp = SCP_RE.match(url)
     if scp is None or scp.group(2).startswith(OPTION_MARK):
         raise _refuse(url)

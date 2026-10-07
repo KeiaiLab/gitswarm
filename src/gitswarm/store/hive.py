@@ -130,7 +130,7 @@ class Hive:
 
     @classmethod
     def init(cls, url: str, home: Path) -> Hive:
-        url = validate_remote_url(url).rstrip("/")
+        url = validate_remote_url(url.rstrip("/"))
         path = hive_path(url, home)
         if (path / HIVE_FILE).exists():
             return cls.open(url, home)
@@ -150,7 +150,7 @@ class Hive:
 
     @classmethod
     def open(cls, url: str, home: Path) -> Hive:
-        path = hive_path(validate_remote_url(url), home)
+        path = hive_path(validate_remote_url(url.rstrip("/")), home)
         if not (path / HIVE_FILE).exists():
             raise NotFound(f"hive not initialized for {url}; run `gitswarm hive init`")
         stored = _stored_url(path / HIVE_FILE)

@@ -16,6 +16,13 @@ GOOD = [
     "/srv/repos/r.git",
     '/tmp/r"#x.git',
     "ssh://git@[::1]/repo",
+    "ssh://git@host:2222/org/repo",
+    "ssh://git@[fe80::1]:22/repo",
+    "ssh://host/~user/repo",
+    "git@[::1]:repo",
+    "file://localhost/srv/r.git",
+    "/tmp/한글 저장소.git",
+    "/tmp/😀.git",
 ]
 
 BAD = [
@@ -36,6 +43,19 @@ BAD = [
     "git@-oProxyCommand=x:repo",
     "ssh://-oProxyCommand=x/repo",
     "ssh://git@-oProxyCommand=x/repo",
+    # 재심 표: ssh 의 host 검사(OpenSSH ≥ 9.6)에 기대지 않는다
+    "ssh://user@[-oPC=x]:22/r",
+    "ssh://host:-1/x",
+    "ssh://ho%0ast/x",
+    "user@host:-oPC",
+    "host;id",
+    "a;touch$IFS",
+    "ssh://us;er@host/r",
+    "ssh://host:22x/r",
+    "https://user:token@host/r",
+    "ssh:///repo",
+    "git@ho st:repo",
+    "/r\udc80.git",
 ]
 
 

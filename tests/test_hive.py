@@ -41,7 +41,7 @@ def test_resolve_home_env(home: Path):
     assert resolve_home() == home
 
 
-@pytest.mark.parametrize("url", ["--upload-pack=touch x;", "ext::sh -c x"])
+@pytest.mark.parametrize("url", ["--upload-pack=touch x;", "ext::sh -c x", "/", "///"])
 def test_hive_refuses_bad_urls(url: str, home: Path):
     from gitswarm.errors import InvalidState
 
