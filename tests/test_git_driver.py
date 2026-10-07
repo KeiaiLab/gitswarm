@@ -135,8 +135,8 @@ def test_push_pre_receive_hook_decline_raises_error(tmp_path: Path):
         g.push(oid, "refs/heads/test", expected=None)
 
 
-def test_push_lease_race_returns_false(tmp_path: Path):
-    """Simulate race where expected value changes between fetch and push → return False."""
+def test_push_lease_stale_after_remote_moved_returns_false(tmp_path: Path):
+    """Sequential stale info: remote moves between fetch and push → return False."""
     remote_path = tmp_path / "remote_race.git"
     Git.init_bare(remote_path)
     g = Git.init_bare(tmp_path / "work.git")
@@ -154,9 +154,42 @@ def test_push_lease_race_returns_false(tmp_path: Path):
     competing_oid = remote_git.commit_tree(tree, [], "competing")
     remote_git.update_ref("refs/heads/race-test", competing_oid)
 
-    # Now try to push with old expected value → lease fails
+    # Now try to push with old expected value → lease fails with stale info
     tree = g.build_tree({})
     new_oid = g.commit_tree(tree, [], "our change")
     result = g.push(new_oid, "refs/heads/race-test", expected=base)
     # Should return False (lease rejection, not error)
     assert result is False
+
+
+@pytest.mark.parametrize(
+    "stderr,expected",
+    [
+        # Stale info rejection (sequential)
+        (
+            " ! [rejected]        e938593f -> x (stale info)\n"
+            "error: failed to push some refs to '../remote.git'",
+            True,
+        ),
+        # Incorrect old value rejection (concurrent race, measured output)
+        (
+            "remote: error: cannot lock ref 'refs/heads/x': "
+            "is at e2e4c333 but expected 77358abf\n"
+            " ! [remote rejected] 862aa4e2 -> x (incorrect old value provided)\n"
+            "error: failed to push some refs to '../remote.git'",
+            True,
+        ),
+        # Pre-receive hook decline (NOT a lease rejection)
+        (
+            "remote: error: hook declined\n"
+            " ! [remote rejected] 862aa4e2 -> x (pre-receive hook declined)\n"
+            "error: failed to push some refs to '../remote.git'",
+            False,
+        ),
+    ],
+)
+def test_is_lease_rejection_classification(stderr: str, expected: bool) -> None:
+    """Pure function: classify lease rejections vs. hook declines."""
+    from gitswarm.driver.git import is_lease_rejection
+
+    assert is_lease_rejection(stderr) is expected

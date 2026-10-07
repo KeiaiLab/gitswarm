@@ -11,13 +11,15 @@ from gitswarm.constants import COMMIT_AUTHOR, COMMIT_EMAIL, tracking_ref
 from gitswarm.errors import RemoteError
 
 RC_LS_REMOTE_MISSING = 2
-REJECTED_MARKERS = (
-    "[rejected]",
-    "stale info",
-    "incorrect old value provided",
-    "reference already exists",
-)
+REJECTED_MARKERS = ("[rejected]", "stale info", "incorrect old value provided")
 MISSING_REMOTE_REF_MARKERS = ("couldn't find remote ref", "remote ref does not exist")
+
+
+def is_lease_rejection(stderr: str) -> bool:
+    """push stderr 가 lease 거절(재시도 대상)인지. 훅 거절·권한 오류는 아니다."""
+    return any(marker in stderr for marker in REJECTED_MARKERS)
+
+
 BLOB_MODE = "100644"
 TREE_MODE = "040000"
 NUL = "\x00"
@@ -126,7 +128,7 @@ class Git:
         if p.returncode == 0:
             return True
         err = p.stderr.decode(errors="replace")
-        if any(m in err for m in REJECTED_MARKERS):
+        if is_lease_rejection(err):
             return False
         raise RemoteError(err.strip())
 
