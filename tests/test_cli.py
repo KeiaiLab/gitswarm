@@ -397,3 +397,11 @@ def test_discovered_option_shaped_origin_fails_closed(tmp_path: Path, home: Path
         code, out = run_here(*argv)
         assert code == 4 and out["error"]["kind"] == "InvalidState", argv
     assert not any(a.startswith("--upload-pack") for args in seen for a in args)
+
+
+def test_doctor_reports_corrupt_hive_and_exits_1(inited: str, home: Path):
+    hive_file = next(home.glob("hives/*/hive.toml"))
+    hive_file.write_text("url = [")
+    code, out = run("doctor", remote=inited)
+    assert code == 1 and out["ok"] is False
+    assert [c["name"] for c in out["checks"] if not c["ok"]] == ["hive"]

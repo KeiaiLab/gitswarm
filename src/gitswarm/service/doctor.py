@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import re
 import tempfile
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from gitswarm.adapters.select import FORGEJO, GITHUB
 from gitswarm.config import CONFIG_FILE, Config, load_config
 from gitswarm.driver.git import Git
-from gitswarm.errors import InvalidState, NotFound, RemoteError
+from gitswarm.errors import GitswarmError, InvalidState, NotFound, RemoteError
 from gitswarm.events import sinks_from_config
 from gitswarm.store.hive import REPO_DIR, Hive, hive_path
 from gitswarm.urls import is_ssh_url, validate_remote_url
@@ -33,14 +34,32 @@ class Check:
 
 def diagnose(remote: str | None, home: Path) -> dict:
     """{ok, checks: [{name, ok, detail}]}. ok = 모든 검사 통과."""
-    checks = [_git(), _home(home), _config(home)]
+    checks = [
+        _guard("git", _git),
+        _guard("home", lambda: _home(home)),
+        _guard("config", lambda: _config(home)),
+    ]
     if remote is None:
         checks.append(Check("remote", True, "none given or found; remote checks skipped"))
     elif (refused := _refused(remote)) is not None:
         checks.append(refused)
     else:
-        checks += [_remote(remote), _hive(remote, home), _ssh_mux(remote, home)]
+        checks += [
+            _guard("remote", lambda: _remote(remote)),
+            _guard("hive", lambda: _hive(remote, home)),
+            _guard("ssh_mux", lambda: _ssh_mux(remote, home)),
+        ]
     return {"ok": all(c.ok for c in checks), "checks": [asdict(c) for c in checks]}
+
+
+def _guard(name: str, check: Callable[[], Check]) -> Check:
+    """검사 하나의 예외를 실패한 검사로 바꾼다 — doctor 는 보고하지, 올리지 않는다."""
+    try:
+        return check()
+    except GitswarmError as e:
+        return Check(name, False, f"{e.kind.value}: {e.detail}")
+    except Exception as e:
+        return Check(name, False, type(e).__name__)
 
 
 def _refused(remote: str) -> Check | None:
@@ -124,7 +143,13 @@ def _ssh_mux(remote: str, home: Path) -> Check:
     if not is_ssh_url(remote):
         return Check("ssh_mux", True, "not an ssh remote")
 
-    problem = Git(hive_path(remote, home) / REPO_DIR).mux_problem()
+    # hive 가 아직 없으면 그 자리 대신 홈에서 설정을 읽는다(git -C 는 있는 디렉터리여야 한다)
+    repo = hive_path(remote, home) / REPO_DIR
+    override = Git(repo if repo.is_dir() else home).ssh_override()
+    if override:
+        return Check("ssh_mux", True, f"disabled: caller set {override}")
+
+    problem = Git(repo).mux_problem()
     if problem:
         return Check("ssh_mux", False, f"{problem}; use a shorter GITSWARM_HOME")
     return Check("ssh_mux", True, "connections are multiplexed")

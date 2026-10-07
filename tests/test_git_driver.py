@@ -496,3 +496,22 @@ def test_option_shaped_url_is_never_an_option(tmp_path: Path):
         with pytest.raises(RemoteError):
             op()
     assert not pwned.exists()
+
+
+def test_network_commands_time_out(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from gitswarm.driver.git import GIT_NETWORK_TIMEOUT_S
+
+    seen: list[object] = []
+
+    def run(cmd, **kw):
+        seen.append(kw.get("timeout"))
+        if "ls-remote" in cmd:
+            raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr("gitswarm.driver.git.subprocess.run", run)
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh")  # 다중화 판정의 git config 호출을 건너뛴다
+    with pytest.raises(RemoteError, match="git ls-remote timed out"):
+        Git(tmp_path).ls_remote("HEAD")
+    Git(tmp_path).rev_parse("HEAD")
+    assert seen == [GIT_NETWORK_TIMEOUT_S, None]

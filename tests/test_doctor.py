@@ -95,6 +95,8 @@ def test_remote_without_head_still_passes(remote_url: str, home: Path, tmp_path:
 @pytest.mark.parametrize("url", ["ssh://git@example.invalid/org/repo.git", "git@h:org/repo"])
 def test_ssh_mux_path_limit(home: Path, monkeypatch, url: str):
     monkeypatch.setattr(Git, "default_branch", lambda self, remote="origin": "main")
+    monkeypatch.delenv("GIT_SSH", raising=False)
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
     # tmp_path 아래 홈은 소켓 한도를 넘는다
     check = _check(diagnose(url, home), "ssh_mux")
     assert check["ok"] is False and "too long" in check["detail"]
@@ -125,3 +127,52 @@ def test_diagnose_refuses_option_shaped_remote(tmp_path: Path, home: Path):
     assert report["ok"] is False
     assert "invalid remote url" in _check(report, "remote")["detail"]
     assert not pwned.exists()
+
+
+def test_corrupt_hive_toml_is_a_failed_check(remote_url: str, home: Path):
+    from gitswarm.store.hive import Hive
+
+    hive = Hive.init(remote_url, home)
+    (hive.path / "hive.toml").write_text("url = [")
+    check = _check(diagnose(remote_url, home), "hive")
+    assert check["ok"] is False and "hive.toml is corrupt" in check["detail"]
+
+
+def test_unexpected_exception_is_a_failed_check(home: Path, monkeypatch):
+    def boom():
+        raise RuntimeError("surprise")
+
+    monkeypatch.setattr(Git, "version", staticmethod(boom))
+    report = diagnose(None, home)
+    assert report["ok"] is False
+    assert _check(report, "git") == {"name": "git", "ok": False, "detail": "RuntimeError"}
+
+
+SSH_URL = "ssh://git@example.invalid/org/repo.git"
+
+
+def _no_network(monkeypatch):
+    monkeypatch.setattr(Git, "default_branch", lambda self, remote="origin": "main")
+    monkeypatch.setattr("gitswarm.driver.git.SOCKET_PATH_MAX", 4096)
+    monkeypatch.delenv("GIT_SSH", raising=False)
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+
+
+def test_ssh_mux_reports_caller_env(home: Path, monkeypatch):
+    _no_network(monkeypatch)
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /k")
+    check = _check(diagnose(SSH_URL, home), "ssh_mux")
+    assert check == {
+        "name": "ssh_mux",
+        "ok": True,
+        "detail": "disabled: caller set GIT_SSH_COMMAND",
+    }
+
+
+def test_ssh_mux_reports_core_ssh_command(home: Path, monkeypatch):
+    _no_network(monkeypatch)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.sshCommand")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "ssh -i /k")
+    check = _check(diagnose(SSH_URL, home), "ssh_mux")
+    assert check["detail"] == "disabled: caller set core.sshCommand"

@@ -54,6 +54,8 @@ def is_lease_rejection(stderr: str) -> bool:
 # SSH 다중화: 명령 하나의 git 호출들이(그리고 ControlPersist 동안 뒤 명령들도) 핸드셰이크 하나를
 # 나눠 쓴다. 호출마다 새 SSH 를 열면 RTT 0.2 s 원격에서 명령당 수 초가 든다.
 NETWORK_COMMANDS = frozenset({"fetch", "push", "ls-remote"})
+GIT_NETWORK_TIMEOUT_S = 60  # 응답 없는 원격(또는 옵션으로 읽힌 명령)이 명령을 영원히 잡지 않게
+CORE_SSH_COMMAND = "core.sshCommand"
 CALLER_SSH_ENVS = ("GIT_SSH_COMMAND", "GIT_SSH")
 SSH_CONTROL_DIR = ".ssh-control"
 # %C(40자 해시) 대신 고정 이름 — %C 면 기본 홈에서도 한도를 넘는다.
@@ -105,14 +107,19 @@ class Git:
             # 판정이 git 문구(거절·없음·up-to-date)에 기댄다 — 번역되면 안 된다
             "LC_ALL": "C",
         }
-        if args[0] in NETWORK_COMMANDS:
+        network = args[0] in NETWORK_COMMANDS
+        if network:
             env |= self._ssh_env()
-        p = subprocess.run(
-            ["git", "-C", str(self.repo), *args],
-            input=data,
-            env=env,
-            capture_output=True,
-        )
+        try:
+            p = subprocess.run(
+                ["git", "-C", str(self.repo), *args],
+                input=data,
+                env=env,
+                capture_output=True,
+                timeout=GIT_NETWORK_TIMEOUT_S if network else None,
+            )
+        except subprocess.TimeoutExpired:
+            raise RemoteError(f"git {args[0]} timed out after {GIT_NETWORK_TIMEOUT_S}s") from None
         if p.returncode not in ok_rc:
             raise RemoteError(
                 p.stderr.decode(errors="replace").strip() or f"git {args[0]} rc={p.returncode}"
@@ -121,10 +128,7 @@ class Git:
 
     def _ssh_env(self) -> dict[str, str]:
         """hive 별 ControlMaster 소켓을 거는 GIT_SSH_COMMAND. 호출자가 ssh 를 정했으면 그것이 이긴다."""
-        if any(var in os.environ for var in CALLER_SSH_ENVS) or self._config_ssh_command:
-            return {}
-
-        if self.mux_problem():
+        if self.ssh_override() or self.mux_problem():
             return {}
 
         control = self.repo / SSH_CONTROL_DIR
@@ -138,6 +142,13 @@ class Git:
             f"ssh -o ControlMaster=auto -o {control_path} -o ControlPersist={SSH_CONTROL_PERSIST_S}"
         )
         return {"GIT_SSH_COMMAND": cmd}
+
+    def ssh_override(self) -> str | None:
+        """호출자가 정한 ssh 설정의 이름(env 또는 core.sshCommand). 있으면 다중화를 걸지 않는다."""
+        for var in CALLER_SSH_ENVS:
+            if var in os.environ:
+                return var
+        return CORE_SSH_COMMAND if self._config_ssh_command else None
 
     def mux_problem(self) -> str | None:
         """이 레포의 ControlMaster 소켓을 쓸 수 없는 이유. 쓸 수 있으면 None."""
