@@ -121,7 +121,7 @@ def workspace_drop(remote: str, ws_id: str) -> dict:
 @mcp.tool
 @payload
 def workspace_gc(remote: str) -> dict:
-    """ttl 이 지난 open workspace 를 drop 한다. Returns {ok, expired: [ws id, ...], invalid: [{id, detail}, ...]} (invalid 는 건너뛴 망가진 레코드). On failure returns {ok: false, error: {kind, detail}}."""
+    """ttl 이 지난 open workspace 를 drop 한다. Returns {ok, expired: [ws id, ...], invalid: [{id, detail}, ...], conflicted: [ws id, ...]} (invalid = 건너뛴 망가진 레코드, conflicted = 본 뒤 남이 push 해 건너뛴 브랜치; 둘 다 workspace_drop 으로 거둔다). On failure returns {ok: false, error: {kind, detail}}."""
     return _svc(remote).gc()
 
 

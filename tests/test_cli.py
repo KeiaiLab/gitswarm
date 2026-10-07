@@ -62,7 +62,7 @@ def test_lifecycle_via_cli(inited: str):
     assert code == 0 and out["state"] == "dropped"
 
     code, out = run("ws", "gc", remote=inited)
-    assert code == 0 and out == {"ok": True, "expired": [], "invalid": []}
+    assert code == 0 and out == {"ok": True, "expired": [], "invalid": [], "conflicted": []}
 
 
 def test_error_exit_codes(inited: str):

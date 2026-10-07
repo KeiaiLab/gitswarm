@@ -59,6 +59,13 @@ class WsState(StrEnum):
     DROPPED = "dropped"
 
 
+class LeaseMode(StrEnum):
+    """branch 삭제의 lease. STRICT = 본 oid 만(gc). FOLLOW = 거절되면 지금 tip 으로 한 번 더(명시적 drop)."""
+
+    STRICT = "strict"
+    FOLLOW = "follow"
+
+
 class Checkout(StrEnum):
     NONE = "none"
     WORKTREE = "worktree"
@@ -424,7 +431,7 @@ class WorkspaceService:
             return self._force_drop(ws_id)
         if ws.state is WsState.DROPPED:
             return ws
-        return self._drop_as(ws, EV_DROPPED)
+        return self._drop_as(ws, EV_DROPPED, LeaseMode.FOLLOW)
 
     def _force_drop(self, ws_id: str) -> Workspace:
         """망가진 레코드의 회수. 지우는 브랜치는 id 로 재계산한 것뿐이다."""
@@ -446,19 +453,32 @@ class WorkspaceService:
         now = self.clock()
         return self._record(ws_id, EV_DROPPED, lambda prev: _salvage(ws_id, prev, now))
 
-    def _drop_as(self, ws: Workspace, kind: str) -> Workspace:
-        # 원격 먼저, lease 로 — 이 호스트가 본 뒤 남이 옮긴 브랜치는 지우지 않는다(로컬도 그대로 둔다)
-        if not self.hive.git.delete_remote(ws.branch, self._seen(ws.branch)):
-            raise Conflict(
-                f"{ws.branch} moved on remote since this host last saw it; not deleting. "
-                "Publish or inspect it first."
-            )
+    def _drop_as(self, ws: Workspace, kind: str, mode: LeaseMode) -> Workspace:
+        # 원격 먼저, lease 로 — 실패하면 로컬도 그대로 둔다
+        if not self._delete_branch(ws.branch, mode):
+            raise Conflict(f"{ws.branch} moved on remote while dropping; not deleting")
 
         self._clear_local(ws.id, ws.branch)
         if ws.token_id:
             self._revoke(ws.token_id)
 
         return self._transition(ws.id, kind, lambda cur: cur.with_state(WsState.DROPPED))
+
+    def _delete_branch(self, branch: str, mode: LeaseMode) -> bool:
+        """원격 브랜치 삭제. 본 oid 로 lease, FOLLOW 면 거절 시 지금 tip 으로 한 번 더(여전히 lease).
+
+        명시적 drop 은 "그 workspace 를 버린다"는 의도라 남의 push 도 따라가 지운다.
+        lease 는 본 것과 지우는 것 사이(TOCTOU)만 막는다 — 그 사이 또 옮겨지면 False.
+        """
+        git = self.hive.git
+        if git.delete_remote(branch, self._seen(branch)):
+            return True
+        if mode is LeaseMode.STRICT:
+            return False
+        current = git.peek(branch)
+        if current is None:  # 그 사이 누가 지웠다 — 삭제는 끝났다
+            return True
+        return git.delete_remote(branch, current)
 
     def _clear_local(self, ws_id: str, branch: str) -> None:
         wt = self.hive.worktree_dir(ws_id)
@@ -514,25 +534,27 @@ class WorkspaceService:
 
     # ── 회수 ──────────────────────────────────────────────────
     def gc(self) -> dict:
-        """ttl 이 지난 open 을 drop. 반환 {"expired": [id], "invalid": [{id, detail}]}.
+        """ttl 이 지난 open 을 drop. 반환 {"expired": [id], "invalid": [{id, detail}], "conflicted": [id]}.
 
-        망가진 레코드는 건너뛰고 보고만 한다 — `ws drop <id>` 가 거둔다.
+        망가진 레코드(invalid)와 본 뒤 남이 옮긴 브랜치(conflicted)는 건너뛰고 보고만 한다 —
+        자동 회수는 본 적 없는 작업을 지우지 않는다. 둘 다 `ws drop <id>` 가 거둔다.
         """
         now = self.clock()
         open_ws, invalid = self.list_report(WsState.OPEN)
-        expired = []
+        expired: list[str] = []
+        conflicted: list[str] = []
         for ws in open_ws:
             if not _expired(ws, now):
                 continue
 
             # 옮겨진 브랜치 하나가 나머지 회수를 막지 않는다
             try:
-                self._drop_as(ws, EV_EXPIRED)
-            except Conflict as e:
-                print(f"gitswarm: gc skipped {ws.id}: {e.detail}", file=sys.stderr)
+                self._drop_as(ws, EV_EXPIRED, LeaseMode.STRICT)
+            except Conflict:
+                conflicted.append(ws.id)
                 continue
             expired.append(ws.id)
-        return {"expired": expired, "invalid": invalid}
+        return {"expired": expired, "invalid": invalid, "conflicted": conflicted}
 
     def events(self, since: str | None) -> list[Event]:
         if since is not None and not OID_RE.fullmatch(since):

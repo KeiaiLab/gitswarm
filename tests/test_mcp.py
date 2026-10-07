@@ -78,7 +78,12 @@ def test_tree_and_gc(remote_url: str, home: Path):
     r = _create(remote_url)
     tree = call("workspace_tree", remote=remote_url, ws_id=r["id"])
     assert "README.md" in str(tree["entries"])
-    assert call("workspace_gc", remote=remote_url) == {"ok": True, "expired": [], "invalid": []}
+    assert call("workspace_gc", remote=remote_url) == {
+        "ok": True,
+        "expired": [],
+        "invalid": [],
+        "conflicted": [],
+    }
 
 
 def test_read_binary_as_b64(remote_url: str, home: Path):

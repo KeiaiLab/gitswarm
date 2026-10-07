@@ -285,8 +285,8 @@ def test_publish_drop_race_stays_consistent(remote_url: str, tmp_path: Path, b_s
         assert branch is not None and isinstance(racer.other_error, Conflict)
     else:
         assert state is WsState.DROPPED and branch is None and a_error is not None
-    # 본 적 있는 B 는 lease 로 거절당하고, 본 적 없는 B 는 지우고 A 의 전이가 거절된다
-    assert state is (WsState.PUBLISHED if b_saw_branch else WsState.DROPPED)
+    # 명시적 drop 은 A 의 push 를 따라가 지운다(본 적 있든 없든) — A 의 published 전이가 거절된다
+    assert state is WsState.DROPPED and isinstance(a_error, InvalidState)
     # §3: dropped 다음에 published 가 오는 이력은 없다
     if "ws.dropped" in kinds:
         assert "ws.published" not in kinds[kinds.index("ws.dropped") :]
@@ -336,7 +336,7 @@ def test_malformed_record_does_not_halt_list_gc_drop(svc: WorkspaceService):
     assert [w.id for w in svc.list(None)] == [good.id]
     _, invalid = svc.list_report(None)
     assert [i["id"] for i in invalid] == [bad.id] and invalid[0]["detail"]
-    assert svc.gc() == {"expired": [], "invalid": invalid}
+    assert svc.gc() == {"expired": [], "invalid": invalid, "conflicted": []}
 
     # 그 레코드도 drop 으로 거둘 수 있다
     dropped = svc.drop(bad.id)

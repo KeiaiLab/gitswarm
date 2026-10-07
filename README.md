@@ -24,8 +24,9 @@ workspace 를 만들고, 체크아웃 없이 읽고, 발행하고, 거둔다. �
 사용법 오류는 `{"ok": false, "error": {"kind": "Usage", …}}` + 종료코드 1.
 
 `ws list` 는 `{"workspaces": […], "invalid": [{"id", "detail"}]}`, `ws gc` 는
-`{"expired": [id…], "invalid": [{"id", "detail"}]}` 를 낸다. `invalid` 는 읽을 수 없는
-meta 레코드다 — 목록·회수를 멈추지 않고 보고만 하며, `ws drop <id>` 로 거둔다.
+`{"expired": [id…], "invalid": [{"id", "detail"}], "conflicted": [id…]}` 를 낸다.
+`invalid` 는 읽을 수 없는 meta 레코드, `conflicted` 는 이 호스트가 본 뒤 남이 push 해
+gc 가 건너뛴 workspace 다 — 둘 다 보고만 하며, `ws drop <id>` 로 거둔다.
 
 ## Claude Code 에 MCP 로 붙이기
 
@@ -76,7 +77,9 @@ push 할 수 있는 누구나 어떤 workspace 든 발행하거나 거둘 수 �
 push ACL 이다(호스트별 레포 한정 토큰으로 좁힌다). 에이전트별 소유권은 C(Landing)의
 몫이다. 원격 meta 브랜치에서 읽은 모든 값(id 문자 집합, 브랜치 재계산,
 created_at/ttl_s, token_id, since oid)은 검증하며, 어긋나면 InvalidState/NotFound 로
-fail-closed 한다.
+fail-closed 한다. `ws drop` 은 그 workspace 브랜치의 발행 안 된 원격 커밋(남이 push 한
+것 포함)까지 지우는 파괴적 동작이고, `ws gc` 는 이 호스트가 본 적 없는 커밋을 절대
+지우지 않는다.
 
 ## 로드맵
 

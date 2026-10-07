@@ -96,10 +96,10 @@ def test_gc_drops_expired_only(remote_url: str, home: Path):
     old = svc.create("main", {}, 60, None, Checkout.NONE, {})
     forever = svc.create("main", {}, 0, None, Checkout.NONE, {})
     svc.clock = lambda: now + timedelta(seconds=61)
-    assert svc.gc() == {"expired": [old.id], "invalid": []}
+    assert svc.gc() == {"expired": [old.id], "invalid": [], "conflicted": []}
     assert svc.get(old.id).state is WsState.DROPPED
     assert svc.get(forever.id).state is WsState.OPEN
-    assert svc.gc() == {"expired": [], "invalid": []}
+    assert svc.gc() == {"expired": [], "invalid": [], "conflicted": []}
 
 
 def test_read_does_not_move_publish_baseline(svc: WorkspaceService, tmp_path: Path):
@@ -187,7 +187,7 @@ def test_forged_records_are_invalid_state(svc: WorkspaceService, forge):
 
 def test_gc_far_future_expiry_does_not_overflow(svc: WorkspaceService):
     ws_id = _forge_fields(svc, created_at="9999-12-31T00:00:00Z", ttl_s=365 * 24 * 3600)
-    assert svc.gc() == {"expired": [], "invalid": []}
+    assert svc.gc() == {"expired": [], "invalid": [], "conflicted": []}
     assert svc.get(ws_id).state is WsState.OPEN
 
 
@@ -241,3 +241,58 @@ def test_create_from_ws_keeps_parent_baseline(svc: WorkspaceService, tmp_path: P
     with pytest.raises(Conflict):
         svc.publish(p.id)
     assert svc.hive.git.ls_remote(p.branch) == theirs
+
+
+def test_explicit_drop_follows_moved_branch(svc: WorkspaceService, tmp_path: Path):
+    r = svc.create("main", {}, 0, None, Checkout.WORKTREE, {})
+    _foreign_push(svc, r.branch, tmp_path)  # 다른 호스트가 이 workspace 브랜치에 push
+    assert svc.drop(r.id).state is WsState.DROPPED
+    assert svc.hive.git.ls_remote(r.branch) is None
+    assert svc.get(r.id).state is WsState.DROPPED
+
+
+class _MoveAfterPeek:
+    """drop 이 원격 tip 을 본 직후 다른 호스트가 또 push 한다."""
+
+    def __init__(self, delegate, move):
+        self._git = delegate
+        self._move = move
+
+    def __getattr__(self, name):
+        return getattr(self._git, name)
+
+    def peek(self, ref: str) -> str | None:
+        oid = self._git.peek(ref)
+        self._move()
+        return oid
+
+
+def test_explicit_drop_conflicts_when_branch_moves_again(svc: WorkspaceService, tmp_path: Path):
+    r = svc.create("main", {}, 0, None, Checkout.NONE, {})
+    _foreign_push(svc, r.branch, tmp_path)
+    other = tmp_path / "other"
+
+    def move() -> None:
+        _commit_file(other, "again.txt", "z\n")
+        git("push", "-q", "origin", "HEAD", cwd=other)
+
+    racer = _MoveAfterPeek(svc.hive.git, move)
+    svc.hive = Hive(svc.hive.path, svc.hive.url, racer)
+    with pytest.raises(Conflict):
+        svc.drop(r.id)
+    assert svc.hive.git.ls_remote(r.branch) == git("rev-parse", "HEAD", cwd=other)
+    assert svc.get(r.id).state is WsState.OPEN
+
+
+def test_gc_reports_moved_branch_as_conflicted(remote_url: str, home: Path, tmp_path: Path):
+    hive = Hive.init(remote_url, home)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    svc = WorkspaceService(hive, MetaStore(hive.git), PlainAdapter(), clock=lambda: now)
+    r = svc.create("main", {}, 60, None, Checkout.NONE, {})
+    theirs = _foreign_push(svc, r.branch, tmp_path)
+    svc.clock = lambda: now + timedelta(seconds=61)
+
+    # 자동 회수는 본 적 없는 작업을 지우지 않는다
+    assert svc.gc() == {"expired": [], "invalid": [], "conflicted": [r.id]}
+    assert svc.hive.git.ls_remote(r.branch) == theirs
+    assert svc.get(r.id).state is WsState.OPEN
