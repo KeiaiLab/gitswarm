@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 from gitswarm.adapters.plain import PlainAdapter
+from gitswarm.adapters.remote import Capability, Scope, Token
+from gitswarm.adapters.select import repo_name
 from gitswarm.constants import ULID_LEN, tracking_ref, ws_ref
 from gitswarm.errors import InvalidState, NotFound
 from gitswarm.service.workspace import Checkout, WorkspaceService, WsState, open_service
@@ -78,7 +80,7 @@ def _creator(remote_url: str, home: str) -> None:
     open_service(remote_url, Path(home)).create("main", {}, 0, None, Checkout.NONE, {})
 
 
-def test_concurrent_create_both_recorded(remote_url: str, home: Path):
+def test_concurrent_create_all_recorded(remote_url: str, home: Path):
     Hive.init(remote_url, home)
     ctx = mp.get_context("spawn")
     procs = [ctx.Process(target=_creator, args=(remote_url, str(home))) for _ in range(3)]
@@ -95,3 +97,39 @@ def test_invalid_transition(svc: WorkspaceService):
     svc.drop(r.id)
     with pytest.raises(InvalidState):
         svc.publish(r.id)
+
+
+class TokenAdapter:
+    def __init__(self) -> None:
+        self.issued: list[tuple[str, str, Scope]] = []
+        self.revoked: list[str] = []
+
+    def capabilities(self) -> frozenset[Capability]:
+        return frozenset({Capability.TOKEN})
+
+    def issue_token(self, repo: str, ws_id: str, scope: Scope) -> Token:
+        self.issued.append((repo, ws_id, scope))
+        return Token("tid", "secret", scope)
+
+    def revoke_token(self, token_id: str) -> None:
+        self.revoked.append(token_id)
+
+
+def test_token_issued_persisted_and_revoked(remote_url: str, home: Path):
+    hive = Hive.init(remote_url, home)
+    adapter = TokenAdapter()
+    svc = WorkspaceService(hive, MetaStore(hive.git), adapter)
+    r = svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
+    assert r.token == "secret"
+    assert svc.get(r.id).token_id == "tid"
+    assert adapter.issued == [(repo_name(hive.url), r.id, Scope.WRITE)]
+    svc.drop(r.id)
+    assert adapter.revoked == ["tid"]
+
+
+def test_branch_push_rejected_writes_nothing(svc: WorkspaceService, monkeypatch):
+    monkeypatch.setattr(type(svc.hive.git), "push", lambda *a, **k: False)
+    with pytest.raises(InvalidState):
+        svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
+    assert svc.list(None) == []
+    assert svc.store.list("ws/") == []
