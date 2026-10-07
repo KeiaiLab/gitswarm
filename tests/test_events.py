@@ -75,10 +75,10 @@ def test_events_rejects_bad_since(remote_url: str, home: Path):
 def test_events_corrupt_record_raises(remote_url: str, home: Path):
     svc = _svc(remote_url, home)
     ws_id = "01J00000000000000000000000"
-    svc.store.apply(Change(meta_path(ws_id), b"not json", f"ws.created {ws_id}"))
+    svc.store.apply(Change(meta_path(ws_id), lambda _: b"not json", f"ws.created {ws_id}"))
     with pytest.raises(InvalidState):
         svc.events(None)
-    svc.store.apply(Change(meta_path(ws_id), b"[1]", f"ws.created {ws_id}"))
+    svc.store.apply(Change(meta_path(ws_id), lambda _: b"[1]", f"ws.created {ws_id}"))
     with pytest.raises(InvalidState):
         svc.events(None)
 

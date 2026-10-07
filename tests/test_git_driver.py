@@ -93,8 +93,8 @@ def test_push_lease_same_oid_with_wrong_expected(repo: Git):
 def test_delete_remote_is_idempotent(repo: Git):
     base = repo.fetch("refs/heads/main")
     repo.push(base, "refs/heads/gitswarm/ws/a", expected=None)
-    repo.delete_remote("refs/heads/gitswarm/ws/a")
-    repo.delete_remote("refs/heads/gitswarm/ws/a")
+    repo.delete_remote("refs/heads/gitswarm/ws/a", expected=None)
+    repo.delete_remote("refs/heads/gitswarm/ws/a", expected=None)
     assert repo.ls_remote("refs/heads/gitswarm/ws/a") is None
 
 
@@ -227,3 +227,36 @@ def test_peek_does_not_move_tracking_ref(repo: Git, tmp_path: Path, remote_url: 
     assert moved != known
     assert repo.rev_parse(tracking_ref(ref)) == known
     assert repo.peek("refs/heads/nope") is None
+
+
+def _foreign_commit(repo: Git, ref: str, msg: str) -> str:
+    """원격 ref 를 다른 쓰기 주체가 옮긴 상황(로컬 tracking 은 그대로)."""
+    other = Git.init_bare(repo.repo.parent / f"other-{msg}.git")
+    other.set_origin(repo.origin_url())
+    oid = other.commit_tree(other.build_tree({}), [], msg)
+    assert other.push(oid, ref, expected=repo.ls_remote(ref))
+    return oid
+
+
+def test_delete_remote_lease_matches(repo: Git):
+    ref = "refs/heads/gitswarm/ws/l"
+    base = repo.fetch("refs/heads/main")
+    repo.push(base, ref, expected=None)
+    assert repo.delete_remote(ref, expected=base) is True
+    assert repo.ls_remote(ref) is None
+    assert repo.rev_parse(tracking_ref(ref)) is None
+
+
+def test_delete_remote_lease_rejected_keeps_branch(repo: Git):
+    ref = "refs/heads/gitswarm/ws/m"
+    base = repo.fetch("refs/heads/main")
+    repo.push(base, ref, expected=None)
+    moved = _foreign_commit(repo, ref, "moved")
+    assert repo.delete_remote(ref, expected=base) is False
+    assert repo.ls_remote(ref) == moved
+
+
+def test_delete_remote_lease_on_missing_is_idempotent(repo: Git):
+    base = repo.fetch("refs/heads/main")
+    assert repo.delete_remote("refs/heads/gitswarm/ws/gone", expected=base) is True
+    assert repo.delete_remote("refs/heads/gitswarm/ws/gone", expected=None) is True

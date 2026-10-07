@@ -8,8 +8,8 @@ import pytest
 from gitswarm.adapters.plain import PlainAdapter
 from gitswarm.adapters.remote import Capability, Scope, Token
 from gitswarm.adapters.select import repo_name
-from gitswarm.constants import ULID_LEN, meta_path, tracking_ref, ws_ref
-from gitswarm.errors import InvalidState, NotFound
+from gitswarm.constants import META_REF, ULID_LEN, meta_path, tracking_ref, ws_ref
+from gitswarm.errors import Conflict, InvalidState, NotFound
 from gitswarm.service.workspace import (
     Checkout,
     Workspace,
@@ -19,6 +19,7 @@ from gitswarm.service.workspace import (
 )
 from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
+from tests.conftest import git as git_cli
 
 
 @pytest.fixture
@@ -70,7 +71,7 @@ def test_list_filters_by_state(svc: WorkspaceService):
 
 def test_drop_twice_is_idempotent(svc: WorkspaceService):
     r = svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.WORKTREE, labels={})
-    svc.hive.git.delete_remote(r.branch)  # 다른 쪽이 먼저 지운 상황
+    svc.hive.git.delete_remote(r.branch, expected=None)  # 다른 쪽이 먼저 지운 상황
     ws = svc.drop(r.id)
     assert ws.state is WsState.DROPPED
     assert svc.drop(r.id).state is WsState.DROPPED
@@ -153,7 +154,7 @@ def _forge(svc: WorkspaceService) -> None:
         base_oid="0" * 40,
         branch="--upload-pack=x",
     ).to_json()
-    svc.store.apply(Change(meta_path(FORGED_ID), body, f"ws.created {FORGED_ID}"))
+    svc.store.apply(Change(meta_path(FORGED_ID), lambda _: body, f"ws.created {FORGED_ID}"))
 
 
 def test_get_rejects_path_like_id(svc: WorkspaceService):
@@ -180,7 +181,7 @@ def test_forged_token_id_fails_closed(svc: WorkspaceService):
         branch=ws_ref(FORGED_ID),
         token_id="../x",
     ).to_json()
-    svc.store.apply(Change(meta_path(FORGED_ID), body, f"ws.created {FORGED_ID}"))
+    svc.store.apply(Change(meta_path(FORGED_ID), lambda _: body, f"ws.created {FORGED_ID}"))
     with pytest.raises(InvalidState):
         svc.get(FORGED_ID)
 
@@ -196,3 +197,74 @@ def test_from_json_ignores_unknown_keys():
     )
     d = ws.to_dict() | {"future": 1}
     assert Workspace.from_json(json.dumps(d).encode()) == ws
+
+
+class _DropDuring:
+    """A 의 meta push 직전에 B 의 drop 을 끝까지 돌린다 — 두 호스트의 경합을 결정적으로 재현."""
+
+    def __init__(self, delegate, other: WorkspaceService, ws_id: str):
+        self._git = delegate
+        self._other = other
+        self._ws_id = ws_id
+        self.other_error: Exception | None = None
+        self.fired = False
+
+    def __getattr__(self, name):
+        return getattr(self._git, name)
+
+    def push(self, oid: str, ref: str, expected: str | None) -> bool:
+        if ref == META_REF and not self.fired:
+            self.fired = True
+            try:
+                self._other.drop(self._ws_id)
+            except (Conflict, InvalidState) as e:
+                self.other_error = e
+        return self._git.push(oid, ref, expected)
+
+
+def _subjects(svc: WorkspaceService, ws_id: str) -> list[str]:
+    """그 workspace 의 meta 이벤트 종류, 오래된 것부터."""
+    out = []
+    for e in reversed(svc.store.log(since=None)):
+        kind, _, rid = e.subject.partition(" ")
+        if rid == ws_id:
+            out.append(kind)
+    return out
+
+
+@pytest.mark.parametrize("b_saw_branch", [False, True])
+def test_publish_drop_race_stays_consistent(remote_url: str, tmp_path: Path, b_saw_branch: bool):
+    hive_a = Hive.init(remote_url, tmp_path / "host-a")
+    hive_b = Hive.init(remote_url, tmp_path / "host-b")
+    svc_b = WorkspaceService(hive_b, MetaStore(hive_b.git), PlainAdapter())
+    svc_a = WorkspaceService(hive_a, MetaStore(hive_a.git), PlainAdapter())
+    r = svc_a.create("main", {}, 0, None, Checkout.WORKTREE, {})
+    if b_saw_branch:
+        hive_b.git.fetch(r.branch)
+
+    wt = Path(r.path)
+    (wt / "a.txt").write_text("a\n")
+    git_cli("add", "a.txt", cwd=wt)
+    git_cli("commit", "-q", "-m", "a", cwd=wt)
+
+    racer = _DropDuring(hive_a.git, svc_b, r.id)
+    svc_a = WorkspaceService(Hive(hive_a.path, hive_a.url, racer), MetaStore(racer), PlainAdapter())
+    a_error: Exception | None = None
+    try:
+        svc_a.publish(r.id)
+    except (Conflict, InvalidState) as e:
+        a_error = e
+    assert racer.fired
+
+    state = svc_b.get(r.id).state
+    branch = hive_b.git.ls_remote(r.branch)
+    kinds = _subjects(svc_b, r.id)
+    if state is WsState.PUBLISHED:
+        assert branch is not None and isinstance(racer.other_error, Conflict)
+    else:
+        assert state is WsState.DROPPED and branch is None and a_error is not None
+    # 본 적 있는 B 는 lease 로 거절당하고, 본 적 없는 B 는 지우고 A 의 전이가 거절된다
+    assert state is (WsState.PUBLISHED if b_saw_branch else WsState.DROPPED)
+    # §3: dropped 다음에 published 가 오는 이력은 없다
+    if "ws.dropped" in kinds:
+        assert "ws.published" not in kinds[kinds.index("ws.dropped") :]

@@ -122,7 +122,7 @@ def _forge_fields(svc: WorkspaceService, **over: object) -> str:
     r = svc.create("main", {}, 60, None, Checkout.NONE, {})
     d = json.loads(svc.store.read(meta_path(r.id))) | over
     body = (json.dumps(d) + "\n").encode()
-    svc.store.apply(Change(meta_path(r.id), body, f"forge {r.id}"))
+    svc.store.apply(Change(meta_path(r.id), lambda _: body, f"forge {r.id}"))
     return r.id
 
 

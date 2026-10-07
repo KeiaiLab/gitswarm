@@ -150,14 +150,27 @@ class Git:
             return False
         raise RemoteError(err.strip())
 
-    def delete_remote(self, ref: str) -> None:
-        p = self._run("push", "-q", "origin", "--delete", ref, ok_rc=(0, 1))
+    def delete_remote(self, ref: str, expected: str | None) -> bool:
+        """원격 ref 삭제. 없으면 성공(멱등).
+
+        expected = 마지막으로 본 oid → lease 삭제, 원격이 옮겨졌으면 지우지 않고 False.
+        expected=None = 본 적 없음 → 무조건 삭제.
+        """
+        args = ["push", "-q", "origin"]
+        if expected is not None:
+            args.append(f"--force-with-lease={ref}:{expected}")
+        p = self._run(*args, f":{ref}", ok_rc=(0, 1))
         if p.returncode == 0:
             self._run("update-ref", "-d", tracking_ref(ref))
-            return
+            return True
+
+        # 이미 없으면 삭제는 끝난 것이다(lease 거절 문구로 와도 같다)
         err = p.stderr.decode(errors="replace")
-        if any(m in err for m in MISSING_REMOTE_REF_MARKERS):
-            return
+        if any(m in err for m in MISSING_REMOTE_REF_MARKERS) or self.ls_remote(ref) is None:
+            self._run("update-ref", "-d", tracking_ref(ref))
+            return True
+        if is_lease_rejection(err):
+            return False
         raise RemoteError(err.strip())
 
     # ── 객체 ──────────────────────────────────────────────────

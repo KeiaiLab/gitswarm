@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime, timedelta
@@ -152,6 +153,13 @@ def _full_ref(ref: str) -> str:
     return ref if ref.startswith("refs/") else HEADS + ref
 
 
+def _new_only(prev: bytes | None, ws: Workspace) -> Workspace:
+    """생성은 빈 자리에만 쓴다 — 같은 id 가 이미 있으면 ULID 충돌이다."""
+    if prev is not None:
+        raise Conflict(f"workspace id {ws.id} already recorded")
+    return ws
+
+
 class WorkspaceService:
     def __init__(
         self,
@@ -223,7 +231,7 @@ class WorkspaceService:
             labels=labels,
             token_id=token[0] if token else None,
         )
-        self._write(ws, EV_CREATED)
+        self._record(ws_id, EV_CREATED, lambda prev: _new_only(prev, ws))
 
         path = None
         if checkout is Checkout.WORKTREE:
@@ -275,10 +283,17 @@ class WorkspaceService:
         return self._drop_as(ws, EV_DROPPED)
 
     def _drop_as(self, ws: Workspace, kind: str) -> Workspace:
+        # 원격 먼저, lease 로 — 이 호스트가 본 뒤 남이 옮긴 브랜치는 지우지 않는다(로컬도 그대로 둔다)
+        seen = self.hive.git.rev_parse(tracking_ref(ws.branch))
+        if not self.hive.git.delete_remote(ws.branch, seen):
+            raise Conflict(
+                f"{ws.branch} moved on remote since this host last saw it; not deleting. "
+                "Publish or inspect it first."
+            )
+
         wt = self.hive.worktree_dir(ws.id)
         if wt.exists():
             self.hive.git.worktree_remove(wt)
-        self.hive.git.delete_remote(ws.branch)
         if self.hive.git.exists(ws.branch):
             self.hive.git.delete_ref(ws.branch)
         if self.hive.git.exists(peek_ref(ws.branch)):
@@ -286,9 +301,7 @@ class WorkspaceService:
         if ws.token_id and Capability.TOKEN in self.adapter.capabilities():
             self.adapter.revoke_token(ws.token_id)
 
-        dropped = ws.with_state(WsState.DROPPED)
-        self._write(dropped, kind)
-        return dropped
+        return self._transition(ws.id, kind, lambda cur: cur.with_state(WsState.DROPPED))
 
     # ── 발행 ──────────────────────────────────────────────────
     def publish(self, ws_id: str) -> str:
@@ -306,7 +319,7 @@ class WorkspaceService:
         if not self.hive.git.push(head, ws.branch, expected=last_known):
             raise Conflict(f"{ws.branch} moved on remote; run `git pull --rebase` in the worktree")
 
-        self._write(ws, EV_PUBLISHED)
+        self._transition(ws_id, EV_PUBLISHED, lambda cur: cur.with_state(WsState.PUBLISHED))
         return head
 
     # ── 회수 ──────────────────────────────────────────────────
@@ -319,7 +332,13 @@ class WorkspaceService:
             born = datetime.fromisoformat(ws.created_at.replace("Z", "+00:00"))
             if born + timedelta(seconds=ws.ttl_s) >= now:
                 continue
-            self._drop_as(ws, EV_EXPIRED)
+
+            # 옮겨진 브랜치 하나가 나머지 회수를 막지 않는다
+            try:
+                self._drop_as(ws, EV_EXPIRED)
+            except Conflict as e:
+                print(f"gitswarm: gc skipped {ws.id}: {e.detail}", file=sys.stderr)
+                continue
             expired.append(ws.id)
         return expired
 
@@ -343,12 +362,36 @@ class WorkspaceService:
         return out
 
     # ── 공통 ──────────────────────────────────────────────────
-    def _write(self, ws: Workspace, kind: str) -> str:
-        oid = self.store.apply(Change(meta_path(ws.id), ws.to_json(), f"{kind} {ws.id}"))
+    def _record(
+        self, ws_id: str, kind: str, build: Callable[[bytes | None], Workspace]
+    ) -> Workspace:
+        """ws_id 레코드를 build(현재 내용) 로 쓴다. CAS 재시도마다 build 가 새 내용으로 다시 돈다."""
+        built: list[Workspace] = []
+
+        def transform(prev: bytes | None) -> bytes:
+            ws = build(prev)
+            built.append(ws)
+            return ws.to_json()
+
+        oid = self.store.apply(Change(meta_path(ws_id), transform, f"{kind} {ws_id}"))
+        ws = built[-1]
+
         ev = Event(kind=kind, id=ws.id, oid=oid, at=_iso(self.clock()), payload=ws.to_dict())
         for sink in self.sinks:
             sink.emit(ev)
-        return oid
+        return ws
+
+    def _transition(
+        self, ws_id: str, kind: str, mutate: Callable[[Workspace], Workspace]
+    ) -> Workspace:
+        """있는 레코드의 상태 전이. 판정(TRANSITIONS)은 매 재시도의 최신 레코드에 대해 한다."""
+
+        def build(prev: bytes | None) -> Workspace:
+            if prev is None:
+                raise NotFound(f"workspace {ws_id} not found")
+            return mutate(Workspace.from_json(prev))
+
+        return self._record(ws_id, kind, build)
 
 
 def open_service(remote_url: str, home: Path) -> WorkspaceService:

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from gitswarm.errors import Conflict
+from gitswarm.errors import Conflict, InvalidState
 from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
 
@@ -21,13 +21,13 @@ def test_empty_store(store: MetaStore):
 
 
 def test_apply_creates_orphan_then_appends(store: MetaStore):
-    c1 = store.apply(Change("ws/a.json", b"{}", "ws.created a"))
-    c2 = store.apply(Change("ws/b.json", b"{}", "ws.created b"))
+    c1 = store.apply(Change("ws/a.json", lambda _: b"{}", "ws.created a"))
+    c2 = store.apply(Change("ws/b.json", lambda _: b"{}", "ws.created b"))
     assert store.tip() == c2
     assert store.list("ws/") == ["ws/a.json", "ws/b.json"]
     assert [e.subject for e in store.log(since=None)] == ["ws.created b", "ws.created a"]
     assert [e.oid for e in store.log(since=c1)] == [c2]
-    c3 = store.apply(Change("ws/a.json", b'{"state":"dropped"}', "ws.dropped a"))
+    c3 = store.apply(Change("ws/a.json", lambda _: b'{"state":"dropped"}', "ws.dropped a"))
     assert store.read("ws/a.json") == b'{"state":"dropped"}'
     assert store.read_at(c1, "ws/a.json") == b"{}"
     assert store.read_at(c3, "ws/b.json") == b"{}"
@@ -35,7 +35,9 @@ def test_apply_creates_orphan_then_appends(store: MetaStore):
 
 def _writer(remote_url: str, home: str, name: str) -> None:
     hive = Hive.open(remote_url, Path(home))
-    MetaStore(hive.git).apply(Change(f"ws/{name}.json", name.encode(), f"ws.created {name}"))
+    MetaStore(hive.git).apply(
+        Change(f"ws/{name}.json", lambda _: name.encode(), f"ws.created {name}")
+    )
 
 
 def test_concurrent_writers_all_land(remote_url: str, home: Path):
@@ -69,7 +71,7 @@ def test_apply_retries_on_concurrent_change(remote_url: str, home: Path):
             if self.push_count == 1:
                 # Apply competing change to move the remote
                 store2 = MetaStore(self._git)
-                store2.apply(Change("ws/competing.json", b"x", "ws.competing"))
+                store2.apply(Change("ws/competing.json", lambda _: b"x", "ws.competing"))
             return self._git.push(oid, ref, expected)
 
     git_wrapper = GitWithInterference(hive.git)
@@ -77,7 +79,7 @@ def test_apply_retries_on_concurrent_change(remote_url: str, home: Path):
 
     # Apply should retry: first push fails (lease stale due to competing),
     # retry succeeds
-    result = store.apply(Change("ws/own.json", b"y", "ws.own"))
+    result = store.apply(Change("ws/own.json", lambda _: b"y", "ws.own"))
     assert result is not None
     assert store.list("ws/") == ["ws/competing.json", "ws/own.json"]
     assert git_wrapper.push_count >= 2
@@ -86,4 +88,55 @@ def test_apply_retries_on_concurrent_change(remote_url: str, home: Path):
 def test_cas_exhaustion_is_conflict(store: MetaStore, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(type(store.git), "push", lambda self, oid, ref, expected: False)
     with pytest.raises(Conflict):
-        store.apply(Change("ws/z.json", b"{}", "ws.created z"))
+        store.apply(Change("ws/z.json", lambda _: b"{}", "ws.created z"))
+
+
+class _Interfere:
+    """push 첫 회 직전에 같은 경로를 다른 쓰기 주체가 먼저 바꾼다."""
+
+    def __init__(self, delegate, path: str, theirs: bytes):
+        self._git = delegate
+        self._path = path
+        self._theirs = theirs
+        self.pushes = 0
+
+    def __getattr__(self, name):
+        return getattr(self._git, name)
+
+    def push(self, oid: str, ref: str, expected: str | None) -> bool:
+        self.pushes += 1
+        if self.pushes == 1:
+            theirs = self._theirs
+            MetaStore(self._git).apply(Change(self._path, lambda _: theirs, "ws.theirs"))
+        return self._git.push(oid, ref, expected)
+
+
+def test_apply_rereads_record_on_retry(remote_url: str, home: Path):
+    hive = Hive.init(remote_url, home)
+    git = _Interfere(hive.git, "ws/own.json", b"theirs")
+    store = MetaStore(git)
+    seen: list[bytes | None] = []
+
+    def append_mine(prev: bytes | None) -> bytes:
+        seen.append(prev)
+        return (prev or b"") + b"+mine"
+
+    store.apply(Change("ws/own.json", append_mine, "ws.own"))
+    # 재시도는 덮어쓰기가 아니라 새 tip 의 레코드를 다시 읽어 변환한다
+    assert seen == [None, b"theirs"]
+    assert store.read("ws/own.json") == b"theirs+mine"
+
+
+def test_apply_propagates_transform_error(remote_url: str, home: Path):
+    hive = Hive.init(remote_url, home)
+    git = _Interfere(hive.git, "ws/own.json", b"dropped")
+    store = MetaStore(git)
+
+    def refuse_after_drop(prev: bytes | None) -> bytes:
+        if prev == b"dropped":
+            raise InvalidState("dropped → published not allowed")
+        return b"published"
+
+    with pytest.raises(InvalidState):
+        store.apply(Change("ws/own.json", refuse_after_drop, "ws.published own"))
+    assert store.read("ws/own.json") == b"dropped"
