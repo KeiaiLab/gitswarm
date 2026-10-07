@@ -287,6 +287,10 @@ class WorkspaceService:
         """이 서비스가 쓰는 원격 URL(hive 에 기록된 것)."""
         return self.hive.url
 
+    def default_base(self) -> str | None:
+        """원격 HEAD 가 가리키는 브랜치 — --base 를 생략했을 때의 기준."""
+        return self.hive.git.default_branch()
+
     # ── 조회 ──────────────────────────────────────────────────
     def get(self, ws_id: str) -> Workspace:
         _check_id(ws_id)
@@ -644,8 +648,8 @@ class WorkspaceService:
 
 
 def open_service(remote_url: str, home: Path) -> WorkspaceService:
-    """CLI·MCP 가 쓰는 조립 지점. Hive 가 없으면 NotFound."""
-    hive = Hive.open(remote_url, home)
+    """CLI·MCP 가 쓰는 조립 지점. Hive 가 없으면 만든다(멱등 — 있으면 원격을 타지 않는다)."""
+    hive = Hive.init(remote_url, home)
     config = load_config(home)
     return WorkspaceService(
         hive, MetaStore(hive.git), adapter_for(hive.url, config), sinks_from_config(config)

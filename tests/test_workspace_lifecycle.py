@@ -385,3 +385,8 @@ def test_drop_revokes_even_without_token_capability(remote_url: str, home: Path,
     assert svc.drop(b.id).state is WsState.DROPPED
     err = capsys.readouterr().err.strip().splitlines()
     assert len(err) == 1 and "not revoked" in err[0]
+
+
+def test_open_service_creates_missing_hive(remote_url: str, home: Path):
+    assert open_service(remote_url, home).list(None) == []
+    assert open_service(remote_url, home).hive.path == Hive.open(remote_url, home).path

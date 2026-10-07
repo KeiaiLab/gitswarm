@@ -177,3 +177,24 @@ def test_every_tool_names_the_remote(remote_url: str, home: Path):
     ):
         out = call(name, remote=remote_url, **args)
         assert out["ok"] is True and out["remote"] == remote_url, name
+
+
+def test_mcp_creates_hive_and_defaults_base(remote_url: str, home: Path):
+    r = call("workspace_create", remote=remote_url)
+    assert r["ok"] is True
+    got = call("workspace_get", remote=remote_url, ws_id=r["id"])
+    assert got["base_ref"] == "refs/heads/main"
+
+
+def test_mcp_remote_without_head_needs_base(remote_url: str, home: Path, tmp_path: Path):
+    git("symbolic-ref", "HEAD", "refs/heads/gone", cwd=tmp_path / "remote.git")
+    out = call("workspace_create", remote=remote_url)
+    assert out["ok"] is False and out["error"]["kind"] == "Usage"
+    assert call("workspace_create", remote=remote_url, base_ref="main")["ok"] is True
+
+
+def test_mcp_from_ws_skips_base_lookup(remote_url: str, home: Path, tmp_path: Path):
+    p = call("workspace_create", remote=remote_url, base_ref="main")
+    git("symbolic-ref", "HEAD", "refs/heads/gone", cwd=tmp_path / "remote.git")
+    c = call("workspace_create", remote=remote_url, from_ws=p["id"])
+    assert c["ok"] is True

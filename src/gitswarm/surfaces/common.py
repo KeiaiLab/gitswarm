@@ -14,6 +14,7 @@ NO_REMOTE = (
     "no remote: pass --remote (MCP: remote), set $GITSWARM_REMOTE, "
     "or run inside a git repo with an origin"
 )
+NO_DEFAULT_BASE = "remote HEAD names no branch; pass --base (MCP: base_ref)"
 
 
 class UsageError(ValueError):
@@ -64,3 +65,13 @@ def service(remote: str | None) -> WorkspaceService:
 def with_remote(svc: WorkspaceService, payload: dict) -> dict:
     """성공 결과에 실제로 쓴 원격을 싣는다 — 자동 발견이 무엇을 골랐는지 호출자가 본다."""
     return {**payload, "remote": svc.url}
+
+
+def resolve_base(svc: WorkspaceService, base: str | None, from_ws: str | None) -> str:
+    """--base, 없으면 원격 HEAD. from_ws 가 있으면 기준은 부모 브랜치라 묻지 않는다(무시되는 값)."""
+    if base or from_ws:
+        return base or ""
+    found = svc.default_base()
+    if found is None:
+        raise UsageError(NO_DEFAULT_BASE)
+    return found

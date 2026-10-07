@@ -85,9 +85,33 @@ def test_error_exit_codes(inited: str):
     }
 
 
-def test_missing_hive_is_not_found(remote_url: str, home: Path):
+def test_missing_hive_is_created_on_demand(remote_url: str, home: Path):
     code, out = run("ws", "list", remote=remote_url)
-    assert code == 2 and out["error"]["kind"] == "NotFound"
+    assert code == 0 and out["workspaces"] == []
+    code, out = run("ws", "create", remote=remote_url)
+    assert code == 0 and out["remote"] == remote_url
+
+
+def test_unreachable_remote_is_remote_error(tmp_path: Path, home: Path):
+    code, out = run("ws", "create", remote=(tmp_path / "nope.git").as_uri())
+    assert code == 6 and out["error"]["kind"] == "RemoteError"
+    assert list(home.glob("hives/*")) == []
+
+
+def test_base_defaults_to_remote_head(inited: str):
+    code, out = run("ws", "create", remote=inited)
+    assert code == 0
+    _, got = run("ws", "get", out["id"], remote=inited)
+    assert got["base_ref"] == "refs/heads/main"
+
+
+def test_remote_without_head_needs_base(inited: str, tmp_path: Path):
+    git("symbolic-ref", "HEAD", "refs/heads/gone", cwd=tmp_path / "remote.git")
+    code, out = run("ws", "create", remote=inited)
+    assert code == 1 and out["error"]["kind"] == "Usage"
+    assert "--base" in out["error"]["detail"]
+    code, _ = run("ws", "create", "--base", "main", remote=inited)
+    assert code == 0
 
 
 BINARY = bytes([0xFF, 0xFE, 0x00, 0x80])
@@ -143,7 +167,7 @@ def test_help_exits_zero(monkeypatch, capsys):
 
 
 def test_main_propagates_notfound_exit_code(monkeypatch, capsys, remote_url: str, home: Path):
-    argv = ("ws", "list", "--remote", remote_url)
+    argv = ("ws", "get", "01J00000000000000000000000", "--remote", remote_url)
     monkeypatch.setattr(sys, "argv", ["gitswarm", *argv])
     code = 0
     try:

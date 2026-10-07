@@ -465,3 +465,19 @@ def test_long_hive_path_skips_multiplexing(tmp_path: Path, monkeypatch: pytest.M
     repo = Git(tmp_path / ("d" * 120))
     repo.repo.mkdir()
     assert "GIT_SSH_COMMAND" not in _captured_env(monkeypatch, repo, "ls-remote")
+
+
+def test_default_branch_reads_remote_head(repo: Git, remote_url: str, tmp_path: Path):
+    assert repo.default_branch() == "main"
+    # 레포 밖에서 URL 로도 읽는다(doctor 는 hive 를 만들지 않는다)
+    assert Git(tmp_path).default_branch(remote_url) == "main"
+
+
+def test_default_branch_none_without_symref(repo: Git, tmp_path: Path):
+    git("symbolic-ref", "HEAD", "refs/heads/gone", cwd=tmp_path / "remote.git")
+    assert repo.default_branch() is None
+
+
+def test_default_branch_unreachable_is_remote_error(tmp_path: Path):
+    with pytest.raises(RemoteError):
+        Git(tmp_path).default_branch((tmp_path / "nope.git").as_uri())

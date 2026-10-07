@@ -19,6 +19,7 @@ from gitswarm.surfaces.common import (
     agent_dict,
     parse_state,
     read_payload,
+    resolve_base,
     service,
     usage_payload,
     with_remote,
@@ -54,7 +55,7 @@ def hive_init(url: str) -> dict:
 @payload
 def workspace_create(
     remote: str | None = None,
-    base_ref: str = "main",
+    base_ref: str | None = None,
     agent_name: str = "",
     agent_run: str = "",
     ttl_s: int = DEFAULT_TTL_S,
@@ -64,13 +65,15 @@ def workspace_create(
 ) -> dict:
     """base 에서 격리 workspace 브랜치를 만든다. checkout=True 면 로컬 worktree 경로도 준다.
 
+    base_ref 를 생략하면 원격 HEAD 가 가리키는 브랜치다. hive 가 없으면 먼저 만든다(멱등).
     ttl_s 는 초 단위(0 = 만료 없음). Returns {ok, id, branch, base_oid, path, token, remote}
     (path 은 checkout=True 일 때만). On failure returns {ok: false, error: {kind, detail}}.
     """
     agent = agent_dict(agent_name, agent_run)
     mode = Checkout.WORKTREE if checkout else Checkout.NONE
     svc = service(remote)
-    r = svc.create(base_ref, agent, ttl_s, from_ws, mode, labels or {})
+    base = resolve_base(svc, base_ref, from_ws)
+    r = svc.create(base, agent, ttl_s, from_ws, mode, labels or {})
     return with_remote(svc, r.to_dict())
 
 

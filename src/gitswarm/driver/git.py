@@ -16,6 +16,7 @@ from gitswarm.constants import (
     COMMIT_AUTHOR,
     COMMIT_EMAIL,
     FETCH_LOCK_RETRIES,
+    HEADS,
     peek_ref,
     tracking_ref,
 )
@@ -39,6 +40,9 @@ LOCAL_LOCK_MARKER = "cannot lock ref"
 MISSING_REMOTE_REF_MARKERS = ("couldn't find remote ref", "remote ref does not exist")
 # 원격이 이미 그 oid 를 들고 있으면 git 은 lease 를 보지 않고 이 문구와 rc 0 으로 끝낸다(-q 면 숨긴다).
 UP_TO_DATE_MARKER = "Everything up-to-date"
+# ls-remote --symref 의 HEAD 줄: "ref: refs/heads/main\tHEAD"
+SYMREF_PREFIX = f"ref: {HEADS}"
+REMOTE_HEAD = "HEAD"
 
 
 def is_lease_rejection(stderr: str) -> bool:
@@ -178,6 +182,15 @@ class Git:
         if p.returncode == RC_LS_REMOTE_MISSING:
             return None
         return p.stdout.decode().split()[0]
+
+    def default_branch(self, remote: str = "origin") -> str | None:
+        """원격 HEAD 가 가리키는 브랜치 이름. 빈 레포·끊긴 HEAD 처럼 symref 가 없으면 None."""
+        out = self._out("ls-remote", "--symref", remote, REMOTE_HEAD)
+        for line in out.splitlines():
+            target, _, name = line.partition("\t")
+            if name == REMOTE_HEAD and target.startswith(SYMREF_PREFIX):
+                return target.removeprefix(SYMREF_PREFIX)
+        return None
 
     def _lock_retry(self, op: Callable[[], str | None]) -> str | None:
         """같은 hive 의 형제 프로세스와 로컬 ref 잠금이 겹치면 잠시 뒤 다시 한다."""

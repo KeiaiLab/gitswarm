@@ -21,6 +21,7 @@ from gitswarm.surfaces.common import (
     UsageError,
     agent_dict,
     read_payload,
+    resolve_base,
     service,
     usage_payload,
     with_remote,
@@ -86,7 +87,7 @@ def hive_init(url: str) -> None:
 @guarded
 def ws_create(
     remote: RemoteOpt = None,
-    base: Annotated[str, typer.Option("--base")] = "main",
+    base: Annotated[str | None, typer.Option("--base", help="default: remote HEAD")] = None,
     agent: Annotated[str, typer.Option("--agent")] = "",
     run: Annotated[str, typer.Option("--run")] = "",
     ttl: Annotated[int, typer.Option("--ttl")] = DEFAULT_TTL_S,
@@ -98,7 +99,7 @@ def ws_create(
     labels = _parse_labels(label or [])
     mode = Checkout.WORKTREE if checkout else Checkout.NONE
     svc = service(remote)
-    r = svc.create(base, agent_info, ttl, from_ws, mode, labels)
+    r = svc.create(resolve_base(svc, base, from_ws), agent_info, ttl, from_ws, mode, labels)
     _emit(with_remote(svc, r.to_dict()))
 
 
