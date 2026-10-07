@@ -96,7 +96,7 @@ def test_publish_without_worktree_records_remote_tip(svc: WorkspaceService, tmp_
 
 def test_publish_without_worktree_at_base_is_invalid(svc: WorkspaceService):
     r = svc.create("main", {}, 0, None, Checkout.NONE, {})
-    with pytest.raises(InvalidState, match="nothing published: branch is still at base"):
+    with pytest.raises(InvalidState, match="still at base; commit and push to the branch first"):
         svc.publish(r.id)
     assert svc.get(r.id).state is WsState.OPEN
 
@@ -372,7 +372,7 @@ def test_drop_on_fresh_host_follows_peeked_tip(remote_url: str, home: Path, tmp_
 
 def test_publish_from_worktree_at_base_is_invalid(svc: WorkspaceService):
     r = svc.create("main", {}, 0, None, Checkout.WORKTREE, {})
-    with pytest.raises(InvalidState, match="nothing published: branch is still at base"):
+    with pytest.raises(InvalidState, match="still at base; commit in the worktree first"):
         svc.publish(r.id)
     assert svc.get(r.id).state is WsState.OPEN
     assert svc.hive.git.rev_parse(lease_ref(r.branch)) == r.base_oid

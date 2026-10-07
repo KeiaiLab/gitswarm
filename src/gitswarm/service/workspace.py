@@ -50,9 +50,10 @@ EV_PUBLISHED = "ws.published"
 EV_DROPPED = "ws.dropped"
 EV_EXPIRED = "ws.expired"
 
-NOTHING_PUBLISHED = (
-    "nothing published: branch is still at base; commit and push to the branch first"
-)
+# 두 publish 경로가 같은 판정, 다음 행동만 다르다
+NOTHING_PUBLISHED = "nothing published: branch is still at base"
+COMMIT_IN_WORKTREE = "commit in the worktree first"
+COMMIT_AND_PUSH = "commit and push to the branch first"
 
 REQUIRED_STR_FIELDS = ("id", "base_ref", "base_oid", "branch")
 OPTIONAL_STR_FIELDS = ("parent", "token_id", "published_oid")
@@ -559,7 +560,7 @@ class WorkspaceService:
         if head is None:
             raise InvalidState(f"{ws.id} worktree has no HEAD")
         if head == ws.base_oid:
-            raise InvalidState(NOTHING_PUBLISHED)
+            raise InvalidState(f"{NOTHING_PUBLISHED}; {COMMIT_IN_WORKTREE}")
 
         if not self._push_leased(head, ws.branch):
             raise Conflict(
@@ -573,7 +574,7 @@ class WorkspaceService:
         """worktree 없는 workspace — 다른 호스트가 push 한 원격 tip. base 그대로면 발행할 것이 없다."""
         oid = self._published_rev(ws)
         if oid == ws.base_oid:
-            raise InvalidState(NOTHING_PUBLISHED)
+            raise InvalidState(f"{NOTHING_PUBLISHED}; {COMMIT_AND_PUSH}")
         return oid
 
     def _seen(self, branch: str) -> str | None:
