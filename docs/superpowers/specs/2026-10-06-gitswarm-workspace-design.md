@@ -172,7 +172,9 @@ raise Conflict
   끊는다 — http `lowSpeedLimit=1000 B/s`·`lowSpeedTime=60`, ssh 는 keepalive.
 - 원격 URL 검증(`urls.validate_remote_url`): 모든 입구(`--remote`·env·cwd 발견·MCP·`hive.toml`)
   에서. 허용 = `ssh|git+ssh|https|http|git|file://…`, scp 꼴 `[user@]host:path`, 절대 경로.
-  `-` 시작·제어 문자·`x::` transport·URL 안의 자격(`user:token@`) 거절 → InvalidState.
+  `-` 시작·제어 문자·`x::` transport 거절, http(s)·git URL 의 userinfo 는 무엇이든 거절(자격뿐이다 —
+  credential helper), ssh·scp 꼴의 로그인 이름(`git@`)은 허용 → InvalidState. 오류·로그에 싣는 URL 은
+  `redact_url` 로 userinfo 를 `***` 로 가리고 120자로 자른다.
   driver 는 URL·ref 자리마다 `--` 를 둔다.
 - 잠금 파일·데몬 없음. 같은 호스트 형제 프로세스가 로컬 tracking ref 디렉터리를 두고 다투는
   `cannot lock ref` 는 fetch 쪽에서 유한 재시도한다.
