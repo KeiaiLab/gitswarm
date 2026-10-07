@@ -133,7 +133,7 @@ on the new tip, so a transition is re-judged against what others wrote.
 
 ```
 apply(change):
- for attempt in 0 .. META_CAS_RETRIES-1:          # 8
+ for attempt in 0 .. META_CAS_RETRIES-1:          # 16
    sleep backoff_s(attempt-1)  if attempt > 0
    old  = fetch origin meta          ──▶ refs/remotes/origin/gitswarm/meta
    prev = old:<path>                 (None if absent)
@@ -160,11 +160,12 @@ host A                 remote meta                  host B
 ```
 
 Backoff (`backoff.py`): `min(CAS_BACKOFF_MAX_S, CAS_BACKOFF_BASE_S * 2**n)`
-times U(0.5, 1.5). Constants: `META_CAS_RETRIES = 8`,
-`CAS_BACKOFF_BASE_S = 0.05`, `CAS_BACKOFF_MAX_S = 1.0`. Jitter spreads
-writers that were rejected in the same beat.
+times U(0.5, 1.5). Constants: `META_CAS_RETRIES = 16`,
+`CAS_BACKOFF_BASE_S = 0.05`, `CAS_BACKOFF_MAX_S = 2.0`. Jitter spreads
+writers that were rejected in the same beat. 8 attempts with a 1.0 s cap
+were exhausted in 1 of 3 runs with 4 concurrent writers.
 
-`Conflict` means: eight attempts all lost the race (meta), or a branch moved
+`Conflict` means: sixteen attempts all lost the race (meta), or a branch moved
 under a lease (publish, drop, gc), or a ULID already has a record. It never
 means a hook or permission failure.
 
@@ -286,9 +287,11 @@ create-to-drop cycles and exits 1 when a command exceeds its budget
 | mode | used by | when the lease is rejected or no oid was seen |
 |---|---|---|
 | `LeaseMode.FOLLOW` | explicit `drop` | peek the current tip, delete once more with that lease. Dropping means "discard this workspace", others' pushes included |
-| `LeaseMode.STRICT` | `gc` | stop. `Conflict` |
+| `LeaseMode.STRICT` | `gc` | peek the current tip; stop with `Conflict` if it exists |
 
-A branch already gone counts as deleted.
+A branch already gone counts as deleted, in both modes. A `drop` whose meta
+CAS lost after the branch was deleted leaves an `open` record without a
+branch; the next `gc` records it as `ws.expired`.
 
 **gc** drops `open` workspaces with `created_at + ttl_s < now` (`ttl_s = 0`
 never expires). Result: `{expired, invalid, conflicted}`.

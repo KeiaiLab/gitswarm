@@ -62,6 +62,9 @@ def remote_url(tmp_path: Path) -> str:
     bare = tmp_path / "remote.git"
     work = tmp_path / "seed"
     git("init", "--bare", "-b", "main", str(bare), cwd=tmp_path)
+    # push 뒤 자동 gc 가 빈 objects/xx 를 지우는 사이 동시 push 가 그 자리에 쓰다 진다
+    # ("unable to write file ./objects/6a/…") — 스트레스 시험은 file:// 원격 하나를 나눠 쓴다
+    git("config", "receive.autogc", "false", cwd=bare)
     git("init", "-b", "main", str(work), cwd=tmp_path)
     (work / "README.md").write_text("seed\n")
     git("add", "README.md", cwd=work)

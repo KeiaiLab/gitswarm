@@ -113,7 +113,7 @@ meta 쓰기 = **읽고-검증하고-쓰는 변환**(`Change(path, transform, sub
 (원격 캐시)만 있고, 새 커밋은 oid 로 직접 push 한다.
 
 ```
-loop ≤ META_CAS_RETRIES(8):
+loop ≤ META_CAS_RETRIES(16):
   old  = fetch origin meta → refs/remotes/origin/gitswarm/meta 의 oid (없으면 빈 값)
   prev = old 에서 path 의 현재 내용(없으면 None)
   new_content = transform(prev)        ← 여기서 상태 전이를 다시 검증한다(§3 전이표)
@@ -127,12 +127,15 @@ raise Conflict
 
 - **재적용은 덮어쓰기가 아니다.** 거절 뒤 재시도는 새 tip 의 레코드를 다시 읽어 전이를 다시
   판정한다. 다른 호스트가 그 사이 `dropped` 로 바꿨으면 `publish` 는 `InvalidState` 로 끝난다.
-- 백오프: `CAS_BACKOFF_BASE_S = 0.05`, `CAS_BACKOFF_MAX_S = 1.0`, 지터 ×[0.5, 1.5]. 동시
-  작성자 N 이 상한보다 많아도 결정적으로 실패하지 않는다.
+- 백오프: `CAS_BACKOFF_BASE_S = 0.05`, `CAS_BACKOFF_MAX_S = 2.0`, 지터 ×[0.5, 1.5]. 동시
+  작성자 N 이 상한보다 많아도 결정적으로 실패하지 않는다. 8 회·1.0 s 는 작성자 4 에서 3 회 중
+  1 회 소진됐다(2026-10-07 실측) — 16 회·2.0 s 는 작성자 8 에서 소진 0 을 시험이 지킨다.
 - `create` 는 브랜치 push 뒤의 어떤 실패(meta `Conflict` 포함)에도 **보상**한다 — 만든 원격
   브랜치·로컬 ref·토큰을 거두고 원래 예외를 올린다. 레코드 없는 고아 브랜치는 남지 않는다.
 - **삭제도 lease 로.** `drop`·`gc` 의 원격 브랜치 삭제는 마지막으로 본 oid 를 기대값으로 건다
   (`--force-with-lease=<ref>:<seen> :<ref>`). 본 적 없는 커밋은 지우지 않는다(`Conflict`).
+  원격에 브랜치가 이미 없으면 지울 것이 없으므로 `gc` 도 전이만 쓴다 — 브랜치를 지운 뒤 meta
+  CAS 가 진 `drop` 의 레코드(브랜치 없는 open)를 다음 `gc` 가 거둔다.
 - 원격 왕복: 사전검사(ls-remote) 없이 git 의 결과를 해석한다(fetch 의 "couldn't find remote
   ref" = 없음, push 의 "Everything up-to-date" = 기대값이 그 oid 일 때만 성공); SSH 는 hive 별
   ControlMaster 로 다중화한다.

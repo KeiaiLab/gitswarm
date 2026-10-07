@@ -11,9 +11,10 @@ LEASE = "refs/gitswarm/lease/"
 META_REF = f"{HEADS}{REF_PREFIX}meta"
 WS_DIR = "ws"  # meta 트리 안의 디렉터리: ws/<id>.json
 
-META_CAS_RETRIES = 8  # 동시 쓰기 주체 N 이 같은 박자면 N 라운드가 든다 — 지터와 함께 여유
+# 동시 쓰기 주체 N 이 같은 박자면 N 라운드가 든다. 8 은 작성자 4 에서 3 회 중 1 회 소진됐다.
+META_CAS_RETRIES = 16
 CAS_BACKOFF_BASE_S = 0.05  # 재시도 간격 = min(MAX, BASE·2^n) × U(0.5, 1.5)
-CAS_BACKOFF_MAX_S = 1.0
+CAS_BACKOFF_MAX_S = 2.0
 FETCH_LOCK_RETRIES = 5  # 같은 hive 를 쓰는 형제 프로세스와의 로컬 ref 잠금 경합
 DEFAULT_TTL_S = 7200
 TTL_FOREVER = 0
