@@ -29,10 +29,31 @@ SCP_RE = re.compile(rf"^(?:{USER}@)?({HOST}):(.+)$", re.DOTALL)
 OPTION_MARK = "-"
 DEL = 0x7F
 FIRST_PRINTABLE = 0x20
+REDACTED_USERINFO = "***"
+REDACT_MAX_CHARS = 120
+ELLIPSIS = "…"
+
+
+def redact_url(url: str) -> str:
+    """오류·로그에 실을 모양. scheme URL 의 userinfo 는 통째로 가리고(토큰만 든 user 도 비밀이다),
+    길면 자른다. 예: https://bot:s3cret@host/r → https://***@host/r
+    """
+    m = SCHEME_RE.match(url)
+    if m:
+        authority, slash, path = m.group(2).partition("/")
+        if "@" in authority:
+            host = authority.rpartition("@")[2]
+            url = f"{m.group(1)}://{REDACTED_USERINFO}@{host}{slash}{path}"
+
+    if len(url) > REDACT_MAX_CHARS:
+        url = url[: REDACT_MAX_CHARS - len(ELLIPSIS)] + ELLIPSIS
+    return url
 
 
 def _refuse(url: object) -> InvalidState:
-    return InvalidState(f"invalid remote url: {url!r}")
+    # 거절된 값도 자격을 실을 수 있다 — 가린 뒤 repr(제어 문자는 이스케이프로 보인다)
+    shown = repr(redact_url(url)) if isinstance(url, str) else type(url).__name__
+    return InvalidState(f"invalid remote url: {shown}")
 
 
 def _printable_utf8(url: str) -> bool:

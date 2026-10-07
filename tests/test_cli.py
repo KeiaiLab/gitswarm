@@ -429,3 +429,17 @@ def test_every_command_and_parameter_has_english_help():
             if p.name != "help" and (not text or not text.isascii()):
                 missing.append(f"{' '.join(path)} {p.name}")
     assert missing == []
+
+
+def test_refused_url_is_redacted_on_stdout(monkeypatch, capsys):
+    code, stdout = main_cli(
+        monkeypatch, capsys, "ws", "list", "--remote", "https://bot:s3cret@host/r"
+    )
+    payload = json.loads(stdout.strip())
+    assert code == 4 and payload["error"]["kind"] == "InvalidState"
+    assert "s3cret" not in stdout and "***@host/r" in stdout
+
+
+def test_refused_url_is_redacted_in_doctor(monkeypatch, capsys):
+    code, stdout = main_cli(monkeypatch, capsys, "doctor", "--remote", "https://bot:s3cret@host/r")
+    assert code != 0 and "s3cret" not in stdout and "***@host/r" in stdout

@@ -21,7 +21,7 @@ from gitswarm.events import sinks_from_config
 from gitswarm.service.workspace import WorkspaceService, unrevoked
 from gitswarm.store.hive import REPO_DIR, Hive, hive_path
 from gitswarm.store.meta import MetaStore
-from gitswarm.urls import is_ssh_url, validate_remote_url
+from gitswarm.urls import is_ssh_url, redact_url, validate_remote_url
 
 # 쓰는 것(ls-remote --symref · merge-base --is-ancestor · cat-file --batch ·
 # push --force-with-lease · worktree · update-ref -d)은 2.39 에 다 있다.
@@ -138,7 +138,7 @@ def _remote(remote: str) -> Check:
         try:
             branch = Git(Path(tmp)).default_branch(remote)
         except RemoteError as e:
-            return Check("remote", False, f"{remote} unreachable: {e.detail}")
+            return Check("remote", False, f"{redact_url(remote)} unreachable: {e.detail}")
 
     if branch is None:
         return Check("remote", True, "reachable; HEAD names no branch — pass --base")

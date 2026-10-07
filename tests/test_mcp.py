@@ -249,3 +249,8 @@ def test_tool_descriptions_are_english():
 
     bad = [name for name, text in asyncio.run(go()).items() if not text or not text.isascii()]
     assert bad == []
+
+
+def test_refused_url_is_redacted_in_payload():
+    out = call("workspace_list", remote="https://bot:s3cret@host/r")
+    assert out["ok"] is False and "s3cret" not in str(out) and "***@host/r" in str(out)

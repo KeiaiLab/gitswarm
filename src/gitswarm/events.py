@@ -16,6 +16,7 @@ import httpx
 
 from gitswarm.config import Config
 from gitswarm.errors import InvalidState
+from gitswarm.urls import redact_url
 
 WEBHOOK_TIMEOUT_S = 5
 SINK_JSONL = "jsonl"
@@ -58,7 +59,8 @@ class WebhookSink:
         # InvalidURL 은 HTTPError 도 ValueError 도 아니다(httpx 0.28), idna 오류는 ValueError
         except (httpx.HTTPError, httpx.InvalidURL, ValueError) as e:
             # 한 줄로: URL 은 repr, 오류는 종류만(httpx 메시지는 여러 줄이다)
-            print(f"gitswarm: webhook {self.url!r} failed: {type(e).__name__}", file=sys.stderr)
+            shown = redact_url(self.url)
+            print(f"gitswarm: webhook {shown!r} failed: {type(e).__name__}", file=sys.stderr)
 
 
 def sinks_from_config(config: Config) -> list[Sink]:

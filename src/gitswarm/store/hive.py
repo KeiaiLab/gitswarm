@@ -17,7 +17,7 @@ from pathlib import Path
 
 from gitswarm.driver.git import Git
 from gitswarm.errors import InvalidState, NotFound
-from gitswarm.urls import validate_remote_url
+from gitswarm.urls import redact_url, validate_remote_url
 
 HOME_ENV = "GITSWARM_HOME"
 DEFAULT_HOME = Path.home() / ".gitswarm"
@@ -163,7 +163,7 @@ class Hive:
     def open(cls, url: str, home: Path) -> Hive:
         path = hive_path(validate_remote_url(url.rstrip("/")), home)
         if not (path / HIVE_FILE).exists():
-            raise NotFound(f"hive not initialized for {url}; run `gitswarm hive init`")
+            raise NotFound(f"hive not initialized for {redact_url(url)}; run `gitswarm hive init`")
         stored = _stored_url(path / HIVE_FILE)
         return cls(path, stored, Git(path / REPO_DIR))
 

@@ -127,3 +127,13 @@ def test_sink_failure_does_not_fail_commit(
     assert svc.get(r.id).id == r.id
     err = capsys.readouterr().err.strip().splitlines()
     assert len(err) == 1 and err[0].startswith("gitswarm: ")
+
+
+@respx.mock
+def test_webhook_failure_hides_url_credentials(capsys):
+    respx.post("https://hook.example/e").mock(return_value=httpx.Response(500))
+    WebhookSink("https://bot:s3cret@hook.example/e").emit(
+        Event(kind="k", id="i", oid="o", at="a", payload={})
+    )
+    err = capsys.readouterr().err
+    assert "s3cret" not in err and "***@hook.example/e" in err

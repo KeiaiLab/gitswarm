@@ -1,7 +1,7 @@
 import pytest
 
 from gitswarm.errors import InvalidState
-from gitswarm.urls import is_ssh_url, validate_remote_url
+from gitswarm.urls import REDACT_MAX_CHARS, is_ssh_url, redact_url, validate_remote_url
 
 GOOD = [
     "ssh://git@host/org/repo.git",
@@ -89,3 +89,38 @@ def test_rejects_non_string():
 )
 def test_is_ssh_url(url: str, ssh: bool):
     assert is_ssh_url(url) is ssh
+
+
+SECRET_URL = "https://bot:s3cret@host/r"
+
+
+def test_refusal_redacts_userinfo():
+    with pytest.raises(InvalidState) as e:
+        validate_remote_url(SECRET_URL)
+    assert "***@host/r" in e.value.detail and "s3cret" not in e.value.detail
+
+
+@pytest.mark.parametrize(
+    "url,shown",
+    [
+        (SECRET_URL, "https://***@host/r"),
+        ("https://ghp_token@github.com/o/r", "https://***@github.com/o/r"),
+        ("ssh://git@host/r", "ssh://***@host/r"),
+        ("https://a:b@c@host/r", "https://***@host/r"),
+        ("https://host/r", "https://host/r"),
+        ("git@host:r", "git@host:r"),
+        ("/srv/r.git", "/srv/r.git"),
+    ],
+)
+def test_redact_url(url: str, shown: str):
+    assert redact_url(url) == shown
+
+
+def test_redact_url_truncates():
+    shown = redact_url("https://host/" + "x" * 500)
+    assert len(shown) == REDACT_MAX_CHARS and shown.endswith("…")
+
+
+def test_refusal_of_non_string_names_its_type():
+    with pytest.raises(InvalidState, match="int"):
+        validate_remote_url(7)  # type: ignore[arg-type]
