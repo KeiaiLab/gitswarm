@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from gitswarm.adapters.plain import PlainAdapter
-from gitswarm.constants import meta_path
+from gitswarm.constants import lease_ref, meta_path, tracking_ref
 from gitswarm.errors import Conflict, InvalidState, NotFound
 from gitswarm.service.workspace import Checkout, WorkspaceService, WsState
 from gitswarm.store.hive import Hive
@@ -189,3 +189,55 @@ def test_gc_far_future_expiry_does_not_overflow(svc: WorkspaceService):
     ws_id = _forge_fields(svc, created_at="9999-12-31T00:00:00Z", ttl_s=365 * 24 * 3600)
     assert svc.gc() == {"expired": [], "invalid": []}
     assert svc.get(ws_id).state is WsState.OPEN
+
+
+def _foreign_push(svc: WorkspaceService, branch_ref: str, tmp_path: Path) -> str:
+    """다른 호스트가 workspace 브랜치에 커밋을 push 한다. 반환 = 그 커밋."""
+    other = tmp_path / "other"
+    branch = branch_ref.removeprefix("refs/heads/")
+    subprocess.run(["git", "clone", "-q", "-b", branch, svc.hive.url, str(other)], check=True)
+    theirs = _commit_file(other, "theirs.txt", "x\n")
+    git("push", "-q", "origin", "HEAD", cwd=other)
+    return theirs
+
+
+def test_plain_fetch_in_worktree_does_not_move_publish_lease(svc: WorkspaceService, tmp_path: Path):
+    r = svc.create("main", {}, 0, None, Checkout.WORKTREE, {})
+    theirs = _foreign_push(svc, r.branch, tmp_path)
+    wt = Path(r.path)
+    git("fetch", "-q", "origin", cwd=wt)  # tracking ref 가 남의 커밋으로 옮겨진다
+    _commit_file(wt, "mine.txt", "y\n")
+    with pytest.raises(Conflict):
+        svc.publish(r.id)
+    assert svc.hive.git.ls_remote(r.branch) == theirs
+
+
+def test_publish_after_pull_rebase_keeps_both(svc: WorkspaceService, tmp_path: Path):
+    r = svc.create("main", {}, 0, None, Checkout.WORKTREE, {})
+    theirs = _foreign_push(svc, r.branch, tmp_path)
+    wt = Path(r.path)
+    _commit_file(wt, "mine.txt", "y\n")
+    git("pull", "-q", "--rebase", "origin", r.branch.removeprefix("refs/heads/"), cwd=wt)
+
+    head = svc.publish(r.id)
+    assert svc.hive.git.ls_remote(r.branch) == head
+    git("merge-base", "--is-ancestor", theirs, head, cwd=wt)  # 남의 커밋을 품었다
+    assert svc.read(r.id, "theirs.txt") == b"x\n" and svc.read(r.id, "mine.txt") == b"y\n"
+    assert svc.hive.git.rev_parse(lease_ref(r.branch)) == head
+
+    svc.drop(r.id)
+    assert svc.hive.git.exists(lease_ref(r.branch)) is False
+
+
+def test_create_from_ws_keeps_parent_baseline(svc: WorkspaceService, tmp_path: Path):
+    p = svc.create("main", {}, 0, None, Checkout.WORKTREE, {})
+    theirs = _foreign_push(svc, p.branch, tmp_path)
+    child = svc.create("main", {}, 0, p.id, Checkout.NONE, {})
+    assert child.base_oid == theirs
+
+    # 자식 생성이 부모의 발행 기준을 옮기지 않는다
+    assert svc.hive.git.rev_parse(tracking_ref(p.branch)) == p.base_oid
+    _commit_file(Path(p.path), "mine.txt", "y\n")
+    with pytest.raises(Conflict):
+        svc.publish(p.id)
+    assert svc.hive.git.ls_remote(p.branch) == theirs

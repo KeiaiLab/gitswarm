@@ -8,7 +8,7 @@ import pytest
 from gitswarm.adapters.plain import PlainAdapter
 from gitswarm.adapters.remote import Capability, Scope, Token
 from gitswarm.adapters.select import repo_name
-from gitswarm.constants import META_REF, ULID_LEN, meta_path, tracking_ref, ws_ref
+from gitswarm.constants import META_REF, ULID_LEN, lease_ref, meta_path, tracking_ref, ws_ref
 from gitswarm.errors import Conflict, InvalidState, NotFound
 from gitswarm.service.workspace import (
     Checkout,
@@ -314,6 +314,7 @@ def test_meta_exhaustion_compensates_branch_and_token(
     assert len(adapter.issued) == 1 and adapter.revoked == ["42"]
     ws_id = adapter.issued[0][1]
     assert hive.git.exists(ws_ref(ws_id)) is False
+    assert hive.git.exists(lease_ref(ws_ref(ws_id))) is False
 
 
 @pytest.mark.parametrize("ttl", [-5, True, "7200", 1.5, 365 * 24 * 3600 + 1])

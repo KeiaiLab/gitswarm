@@ -218,6 +218,10 @@ class Git:
             return None
         return p.stdout.decode().strip()
 
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        p = self._run("merge-base", "--is-ancestor", ancestor, descendant, ok_rc=(0, 1))
+        return p.returncode == 0
+
     def exists(self, rev: str) -> bool:
         return self._run("cat-file", "-e", rev, ok_rc=(0, 1, 128)).returncode == 0
 

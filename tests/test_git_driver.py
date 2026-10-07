@@ -319,3 +319,10 @@ def test_ls_remote_prefix(repo: Git):
         "refs/heads/gitswarm/ws/a": base,
         "refs/heads/gitswarm/ws/b": base,
     }
+
+
+def test_is_ancestor(repo: Git):
+    base = repo.fetch("refs/heads/main")
+    child = repo.commit_tree(repo.build_tree({}), [base], "child")
+    assert repo.is_ancestor(base, child) is True
+    assert repo.is_ancestor(child, base) is False

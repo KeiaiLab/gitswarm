@@ -6,6 +6,7 @@ REF_PREFIX = "gitswarm/"
 HEADS = "refs/heads/"
 TRACKING = "refs/remotes/origin/"
 PEEK = "refs/gitswarm/peek/"
+LEASE = "refs/gitswarm/lease/"
 
 META_REF = f"{HEADS}{REF_PREFIX}meta"
 WS_DIR = "ws"  # meta 트리 안의 디렉터리: ws/<id>.json
@@ -45,6 +46,13 @@ def peek_ref(ref: str) -> str:
     if not ref.startswith(HEADS):
         raise ValueError(f"not a branch ref: {ref}")
     return PEEK + ref[len(HEADS) :]
+
+
+def lease_ref(ref: str) -> str:
+    """refs/heads/X → refs/gitswarm/lease/X. publish·drop 의 lease 기준(아무 fetch 도 옮기지 못한다)."""
+    if not ref.startswith(HEADS):
+        raise ValueError(f"not a branch ref: {ref}")
+    return LEASE + ref[len(HEADS) :]
 
 
 def meta_path(ws_id: str) -> str:

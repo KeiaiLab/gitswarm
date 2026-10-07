@@ -28,6 +28,7 @@ from gitswarm.constants import (
     TOKEN_ID_RE,
     TTL_FOREVER,
     WS_DIR,
+    lease_ref,
     meta_path,
     peek_ref,
     tracking_ref,
@@ -319,7 +320,8 @@ class WorkspaceService:
             raise InvalidState(f"ttl_s must be an integer in [0, {MAX_TTL_S}], got {ttl_s!r}")
         parent = self.get(from_ws) if from_ws else None
         src_ref = parent.branch if parent else _full_ref(base_ref)
-        base_oid = self.hive.git.fetch(src_ref)
+        # peek: oid 만 필요하다 — tracking 을 옮기면 부모의 발행 기준이 남의 커밋으로 바뀐다
+        base_oid = self.hive.git.peek(src_ref)
         if base_oid is None:
             raise NotFound(f"base ref {src_ref} not on remote")
 
@@ -333,6 +335,7 @@ class WorkspaceService:
         token: tuple[str, str] | None = None
         try:
             self.hive.git.update_ref(branch, base_oid)
+            self.hive.git.update_ref(lease_ref(branch), base_oid)
             token = self._issue_token(ws_id)
             ws = Workspace(
                 id=ws_id,
@@ -364,6 +367,7 @@ class WorkspaceService:
         steps: list[tuple[str, Callable[[], object]]] = [
             ("delete remote branch", lambda: self.hive.git.delete_remote(branch, None)),
             ("delete local ref", lambda: self.hive.git.delete_ref(branch)),
+            ("delete lease ref", lambda: self.hive.git.delete_ref(lease_ref(branch))),
         ]
         if token:
             steps.append(("revoke token", lambda: self.adapter.revoke_token(token[0])))
@@ -444,8 +448,7 @@ class WorkspaceService:
 
     def _drop_as(self, ws: Workspace, kind: str) -> Workspace:
         # 원격 먼저, lease 로 — 이 호스트가 본 뒤 남이 옮긴 브랜치는 지우지 않는다(로컬도 그대로 둔다)
-        seen = self.hive.git.rev_parse(tracking_ref(ws.branch))
-        if not self.hive.git.delete_remote(ws.branch, seen):
+        if not self.hive.git.delete_remote(ws.branch, self._seen(ws.branch)):
             raise Conflict(
                 f"{ws.branch} moved on remote since this host last saw it; not deleting. "
                 "Publish or inspect it first."
@@ -461,7 +464,7 @@ class WorkspaceService:
         wt = self.hive.worktree_dir(ws_id)
         if wt.exists():
             self.hive.git.worktree_remove(wt)
-        for ref in (branch, peek_ref(branch)):
+        for ref in (branch, peek_ref(branch), lease_ref(branch)):
             if self.hive.git.exists(ref):
                 self.hive.git.delete_ref(ref)
 
@@ -480,13 +483,31 @@ class WorkspaceService:
         if head is None:
             raise InvalidState(f"{ws_id} worktree has no HEAD")
 
-        # 기대값 = 마지막으로 알던 원격. 지금 fetch 하면 남의 커밋을 덮어쓰게 되므로 하지 않는다.
-        last_known = self.hive.git.rev_parse(tracking_ref(ws.branch))
-        if not self.hive.git.push(head, ws.branch, expected=last_known):
-            raise Conflict(f"{ws.branch} moved on remote; run `git pull --rebase` in the worktree")
+        if not self._push_leased(head, ws.branch):
+            raise Conflict(
+                f"{ws.branch} moved on remote; run "
+                f"`git pull --rebase origin {ws_branch(ws_id)}` in the worktree"
+            )
+        self.hive.git.update_ref(lease_ref(ws.branch), head)
 
         self._transition(ws_id, EV_PUBLISHED, lambda cur: cur.with_state(WsState.PUBLISHED))
         return head
+
+    def _seen(self, branch: str) -> str | None:
+        """이 호스트가 마지막으로 확인한 원격 oid. lease ref 가 없으면(남이 만든 것) tracking."""
+        git = self.hive.git
+        return git.rev_parse(lease_ref(branch)) or git.rev_parse(tracking_ref(branch))
+
+    def _push_leased(self, head: str, branch: str) -> bool:
+        """HEAD 를 lease push. 거절이어도 HEAD 가 원격 tip 을 이미 품었으면(pull --rebase 뒤)
+        그 tip 을 lease 로 한 번 더 — 남의 커밋을 잃지 않음이 조상 관계로 증명된다."""
+        git = self.hive.git
+        if git.push(head, branch, expected=self._seen(branch)):
+            return True
+        remote = git.peek(branch)
+        if remote is None or not git.is_ancestor(remote, head):
+            return False
+        return git.push(head, branch, expected=remote)
 
     # ── 회수 ──────────────────────────────────────────────────
     def gc(self) -> dict:
