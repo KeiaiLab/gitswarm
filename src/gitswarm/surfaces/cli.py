@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import sys
 from functools import wraps
@@ -14,6 +13,7 @@ from gitswarm.constants import DEFAULT_TTL_S
 from gitswarm.errors import EXIT_CODES, GitswarmError
 from gitswarm.service.workspace import Checkout, WsState, open_service
 from gitswarm.store.hive import Hive, resolve_home
+from gitswarm.surfaces.common import agent_dict, read_payload, usage_payload
 
 # typer>=0.27 vendors click as typer._click; older typer uses the real click.
 try:
@@ -23,7 +23,6 @@ except ImportError:  # pragma: no cover
 
 REMOTE_ENV = "GITSWARM_REMOTE"
 EXIT_USAGE = 1
-USAGE_KIND = "Usage"
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 hive_app = typer.Typer(no_args_is_help=True)
@@ -40,10 +39,6 @@ RemoteOpt = Annotated[
 
 def _emit(payload: dict) -> None:
     typer.echo(json.dumps({"ok": True, **payload}, ensure_ascii=False))
-
-
-def _usage_payload(detail: str) -> dict:
-    return {"ok": False, "error": {"kind": USAGE_KIND, "detail": detail}}
 
 
 def _remote(remote: str | None) -> str:
@@ -101,7 +96,7 @@ def ws_create(
     checkout: Annotated[bool, typer.Option("--checkout")] = False,
     label: Annotated[list[str] | None, typer.Option("--label", help="k=v")] = None,
 ) -> None:
-    agent_info = {k: v for k, v in (("name", agent), ("run", run)) if v}
+    agent_info = agent_dict(agent, run)
     labels = _parse_labels(label or [])
     mode = Checkout.WORKTREE if checkout else Checkout.NONE
     r = _svc(remote).create(base, agent_info, ttl, from_ws, mode, labels)
@@ -127,10 +122,7 @@ def ws_list(
 @guarded
 def ws_read(ws_id: str, path: str, remote: RemoteOpt = None) -> None:
     data = _svc(remote).read(ws_id, path)
-    try:
-        _emit({"path": path, "content": data.decode("utf-8")})
-    except UnicodeDecodeError:
-        _emit({"path": path, "content_b64": base64.b64encode(data).decode()})
+    _emit(read_payload(path, data))
 
 
 @ws_app.command("tree")
@@ -170,12 +162,12 @@ def main() -> None:
     try:
         rc = app(standalone_mode=False)
     except click_exc.UsageError as e:
-        typer.echo(json.dumps(_usage_payload(e.format_message()), ensure_ascii=False))
+        typer.echo(json.dumps(usage_payload(e.format_message()), ensure_ascii=False))
         sys.exit(EXIT_USAGE)
     except typer.Exit as e:
         sys.exit(e.exit_code)
     except typer.Abort:
-        typer.echo(json.dumps(_usage_payload("aborted")))
+        typer.echo(json.dumps(usage_payload("aborted")))
         sys.exit(EXIT_USAGE)
 
     sys.exit(rc if isinstance(rc, int) else 0)
