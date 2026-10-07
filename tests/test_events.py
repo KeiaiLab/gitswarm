@@ -2,14 +2,17 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 import respx
 
 from gitswarm.adapters.plain import PlainAdapter
 from gitswarm.config import Config, SinkSpec
-from gitswarm.events import JsonlSink, WebhookSink, parse_subject, sinks_from_config
+from gitswarm.constants import meta_path
+from gitswarm.errors import InvalidState, NotFound
+from gitswarm.events import Event, JsonlSink, WebhookSink, parse_subject, sinks_from_config
 from gitswarm.service.workspace import Checkout, WorkspaceService
 from gitswarm.store.hive import Hive
-from gitswarm.store.meta import MetaStore
+from gitswarm.store.meta import Change, MetaStore
 
 
 def test_parse_subject():
@@ -51,3 +54,36 @@ def test_webhook_sink_posts_and_survives_failure(remote_url: str, home: Path, ca
     r = svc.create("main", {}, 0, None, Checkout.NONE, {})
     assert route.called and json.loads(route.calls[0].request.content)["id"] == r.id
     assert "webhook" in capsys.readouterr().err
+
+
+def _svc(remote_url: str, home: Path, sinks=()) -> WorkspaceService:
+    hive = Hive.init(remote_url, home)
+    return WorkspaceService(hive, MetaStore(hive.git), PlainAdapter(), sinks=list(sinks))
+
+
+def test_unknown_sink_kind_raises():
+    with pytest.raises(InvalidState):
+        sinks_from_config(Config(sinks=[SinkSpec("webhok", "x")]))
+
+
+def test_events_rejects_bad_since(remote_url: str, home: Path):
+    svc = _svc(remote_url, home)
+    with pytest.raises(NotFound):
+        svc.events(since="--output=/x")
+
+
+def test_events_corrupt_record_raises(remote_url: str, home: Path):
+    svc = _svc(remote_url, home)
+    ws_id = "01J00000000000000000000000"
+    svc.store.apply(Change(meta_path(ws_id), b"not json", f"ws.created {ws_id}"))
+    with pytest.raises(InvalidState):
+        svc.events(None)
+    svc.store.apply(Change(meta_path(ws_id), b"[1]", f"ws.created {ws_id}"))
+    with pytest.raises(InvalidState):
+        svc.events(None)
+
+
+def test_jsonl_sink_creates_parent_dir(tmp_path: Path):
+    path = tmp_path / "new" / "dir" / "e.jsonl"
+    JsonlSink(path).emit(Event("k", "i", "o", "t", {}))
+    assert path.exists()

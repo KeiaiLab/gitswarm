@@ -36,6 +36,7 @@ from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
 
 ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+OID_RE = re.compile(r"^[0-9a-f]{40}$")
 
 EV_CREATED = "ws.created"
 EV_PUBLISHED = "ws.published"
@@ -320,18 +321,21 @@ class WorkspaceService:
         return expired
 
     def events(self, since: str | None) -> list[Event]:
+        if since is not None and not OID_RE.fullmatch(since):
+            raise NotFound(f"invalid since oid: {since!r}")
+
         out = []
         for entry in self.store.log(since):
             kind, ws_id = parse_subject(entry.subject)
             raw = self.store.read_at(entry.oid, meta_path(ws_id)) or b"{}"
+            try:
+                data = json.loads(raw)
+            except ValueError:
+                data = None
+            if not isinstance(data, dict):
+                raise InvalidState(f"corrupt workspace record at {entry.oid}: {meta_path(ws_id)}")
             out.append(
-                Event(
-                    kind=kind,
-                    id=ws_id,
-                    oid=entry.oid,
-                    at=entry.committed_at,
-                    payload=json.loads(raw),
-                )
+                Event(kind=kind, id=ws_id, oid=entry.oid, at=entry.committed_at, payload=data)
             )
         return out
 

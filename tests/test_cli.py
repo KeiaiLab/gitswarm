@@ -161,3 +161,8 @@ def test_events_tail_via_cli(inited: str):
     code, tail = run("events", "tail", remote=inited)
     assert code == 0 and tail["ok"] is True
     assert [e["kind"] for e in tail["events"]] == ["ws.dropped", "ws.created"]
+
+
+def test_events_tail_bad_since_exits_2(inited: str):
+    code, out = run("events", "tail", "--since", "bogus", remote=inited)
+    assert code == 2 and out["error"]["kind"] == "NotFound"

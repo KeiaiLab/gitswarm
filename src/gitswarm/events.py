@@ -12,6 +12,7 @@ from typing import Protocol
 import httpx
 
 from gitswarm.config import Config
+from gitswarm.errors import InvalidState
 
 WEBHOOK_TIMEOUT_S = 5
 SINK_JSONL = "jsonl"
@@ -39,6 +40,7 @@ class JsonlSink:
     path: Path
 
     def emit(self, event: Event) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
 
@@ -61,6 +63,8 @@ def sinks_from_config(config: Config) -> list[Sink]:
             sinks.append(JsonlSink(Path(spec.target).expanduser()))
         elif spec.kind == SINK_WEBHOOK:
             sinks.append(WebhookSink(spec.target))
+        else:
+            raise InvalidState(f"unknown sink kind {spec.kind!r}; expected jsonl|webhook")
     return sinks
 
 
