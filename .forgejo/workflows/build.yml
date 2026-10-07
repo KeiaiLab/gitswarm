@@ -1,0 +1,52 @@
+# keiai-sans build.yml(2026-08-06 host 러너 이관) 계승 — RFC-0127 원격 buildkitd 로 파이썬 툴체인 실행
+name: build
+
+on:
+  push:
+    branches: [stable]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: host
+    timeout-minutes: 30
+    steps:
+      - name: 린트·테스트·빌드·휠 증빙 (BuildKit remote, RFC-0127)
+        run: |
+          set -eu
+          [ -f /buildkit-certs/ca.crt ] || { echo "FATAL: /buildkit-certs 부재 (RFC-0127)"; exit 1; }
+          [ -f /harbor-auth/config.json ] || { echo "FATAL: /harbor-auth 부재 (base 이미지 pull 인증)"; exit 1; }
+          WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+          git clone --depth 50 "https://x-access-token:${GITHUB_TOKEN}@git.keiailab.com/${GITHUB_REPOSITORY}.git" "$WORK/src"
+          cd "$WORK/src"
+          PRNUM="${{ github.event.pull_request.number }}"
+          if [ -n "$PRNUM" ]; then
+            git fetch --depth 50 origin "refs/pull/${PRNUM}/head"
+            git checkout --quiet FETCH_HEAD
+          else
+            git checkout --quiet "${GITHUB_SHA}" 2>/dev/null || echo "GITHUB_SHA 미도달 — 클론 HEAD 로 검증"
+          fi
+          export DOCKER_CONFIG="$WORK/.docker"
+          mkdir -p "$DOCKER_CONFIG" && cp /harbor-auth/config.json "$DOCKER_CONFIG/config.json"
+          cat > Dockerfile.ci <<'DOCKERFILE'
+          FROM harbor.keiailab.com/ghcr-proxy/astral-sh/uv:python3.12-bookworm
+          WORKDIR /w
+          COPY . .
+          RUN git --version
+          RUN uv sync --dev
+          RUN uv run ruff check src scripts tests
+          RUN uv run ruff format --check src scripts tests
+          RUN uv run pytest tests -q
+          RUN uv build && uv run --isolated --with dist/*.whl gitswarm --help
+          DOCKERFILE
+          buildctl \
+            --addr "tcp://buildkitd.ci.svc.cluster.local:1234" \
+            --tlscacert /buildkit-certs/ca.crt \
+            --tlscert /buildkit-certs/tls.crt \
+            --tlskey /buildkit-certs/tls.key \
+            build --frontend dockerfile.v0 \
+            --local context="$PWD" \
+            --local dockerfile="$PWD" \
+            --opt filename=Dockerfile.ci \
+            --opt platform=linux/amd64
+          echo "verify PASS"
