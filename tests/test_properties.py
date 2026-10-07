@@ -116,12 +116,6 @@ SURROGATES = st.text(st.characters(min_codepoint=0xD800, max_codepoint=0xDFFF), 
 FREE_STR_FIELDS = ("agent", "labels", "base_ref", "base_oid")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=UnicodeEncodeError,
-    reason="from_json accepts lone surrogates (\\ud800) in free-form fields; "
-    "to_json then raises UnicodeEncodeError, so publish/drop crash outside GitswarmError",
-)
 @PROPS
 @given(st.sampled_from(FREE_STR_FIELDS), SURROGATES)
 def test_from_json_surrogate_round_trip(name: str, s: str):

@@ -15,6 +15,7 @@ from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
 from gitswarm.surfaces import mcp as mcp_mod
 from gitswarm.surfaces.common import parse_state
+from tests.conftest import ls_remote_prefix
 from tests.test_workspace_lifecycle import TokenAdapter
 
 FORGED_ID = "01J00000000000000000000001"
@@ -85,6 +86,59 @@ def test_force_drop_revokes_token_of_malformed_record(remote_url: str, home: Pat
 
     assert svc.drop(r.id).state is WsState.DROPPED
     assert adapter.revoked == ["42"]
+
+
+# ── text fields ──────────────────────────────────────────────
+SURROGATE = "\ud800"  # json.dumps 가 "\\ud800" 으로 내보내고 json.loads 가 그대로 되살린다
+
+
+def _with(ws_id: str, **fields) -> bytes:
+    return json.dumps(json.loads(_valid_body(ws_id)) | fields).encode()
+
+
+@pytest.mark.parametrize(
+    "fields,detail",
+    [
+        ({"agent": {"name": SURROGATE}}, "non-UTF-8 text"),
+        ({"labels": {SURROGATE: "v"}}, "non-UTF-8 text"),
+        ({"base_ref": SURROGATE}, "non-UTF-8 text"),
+        ({"agent": ["name"]}, "agent is not a string map"),
+        ({"labels": "k=v"}, "labels is not a string map"),
+        ({"agent": {"pid": 1}}, "agent is not a string map"),
+    ],
+    ids=["agent-value", "labels-key", "base_ref", "agent-list", "labels-str", "agent-int"],
+)
+def test_from_json_rejects_bad_text(fields: dict, detail: str):
+    with pytest.raises(InvalidState, match=detail):
+        Workspace.from_json(_with(FORGED_ID, **fields))
+
+
+def test_force_drop_salvages_record_with_bad_text(svc: WorkspaceService):
+    r = _create(svc)
+    _write(svc, r.id, _with(r.id, agent={"name": SURROGATE}, base_ref=SURROGATE))
+
+    # 서로게이트는 옮기지 않는다 — 옮기면 기록(to_json)에서 UnicodeEncodeError 로 죽는다
+    dropped = svc.drop(r.id)
+    assert dropped.state is WsState.DROPPED
+    assert dropped.agent == {} and dropped.base_ref == ""
+    assert svc.hive.git.ls_remote(r.branch) is None
+
+
+@pytest.mark.parametrize(
+    "base,agent,labels",
+    [
+        ("main", {"name": SURROGATE}, {}),
+        ("main", {}, {"k": SURROGATE}),
+        ("main", {}, {"k": 1}),
+        (SURROGATE, {}, {}),
+    ],
+    ids=["agent", "label", "label-int", "base"],
+)
+def test_create_rejects_bad_text_before_push(svc: WorkspaceService, base, agent, labels):
+    with pytest.raises(InvalidState):
+        svc.create(base, agent, 0, None, Checkout.NONE, labels)
+    assert ls_remote_prefix(svc.hive.git.repo, ws_ref("")) == {}
+    assert svc.list(None) == []
 
 
 # ── record builders called directly ──────────────────────────

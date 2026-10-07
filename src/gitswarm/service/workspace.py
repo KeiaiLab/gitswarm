@@ -57,6 +57,10 @@ COMMIT_AND_PUSH = "commit and push to the branch first"
 
 REQUIRED_STR_FIELDS = ("id", "base_ref", "base_oid", "branch")
 OPTIONAL_STR_FIELDS = ("parent", "token_id", "published_oid")
+TEXT_MAP_FIELDS = ("agent", "labels")  # 자유 텍스트: str → str 사전
+
+MALFORMED = "malformed workspace record"
+BAD_CREATE = "invalid create input"
 
 
 class WsState(StrEnum):
@@ -133,6 +137,47 @@ def _check_str_fields(ws: Workspace) -> None:
             raise InvalidState(f"malformed workspace record: {name} is not a string")
 
 
+def _utf8(s: str) -> bool:
+    """UTF-8 로 쓸 수 있는가. 외톨이 서로게이트("\\ud800")는 json.loads 를 지나도 못 쓴다."""
+    try:
+        s.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _map_texts(v: object) -> list[str] | None:
+    """str → str 사전이면 그 키·값 전부, 아니면 None."""
+    if not isinstance(v, dict):
+        return None
+    texts = [*v.keys(), *v.values()]
+    if not all(isinstance(t, str) for t in texts):
+        return None
+    return texts
+
+
+def _check_text(what: str, texts: list[object], maps: dict[str, object]) -> None:
+    """maps 는 str → str 사전, texts·maps 의 모든 str 은 UTF-8 이어야 한다.
+
+    레코드는 UTF-8 JSON 으로 쓰인다 — 여기서 거르지 않으면 to_json 이 UnicodeEncodeError
+    (GitswarmError 아님)로 drop·gc·publish 를 멈춘다.
+    """
+    texts = list(texts)
+    for name, m in maps.items():
+        items = _map_texts(m)
+        if items is None:
+            raise InvalidState(f"{what}: {name} is not a string map")
+        texts += items
+
+    if not all(_utf8(t) for t in texts if isinstance(t, str)):
+        raise InvalidState(f"{what}: non-UTF-8 text")
+
+
+def _check_record_text(ws: Workspace) -> None:
+    texts = [getattr(ws, f.name) for f in fields(ws)]
+    _check_text(MALFORMED, texts, {name: getattr(ws, name) for name in TEXT_MAP_FIELDS})
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -176,6 +221,7 @@ class Workspace:
             raise InvalidState(f"malformed workspace record: {type(e).__name__}") from None
 
         _check_str_fields(ws)
+        _check_record_text(ws)
         if not ULID_RE.fullmatch(ws.id):
             raise InvalidState(f"malformed workspace record: id {ws.id!r}")
         if ws.branch != ws_ref(ws.id):
@@ -266,7 +312,11 @@ def _salvage(ws_id: str, prev: bytes | None, now: datetime) -> Workspace:
         return v if ok(v) else default
 
     def is_str(v: object) -> bool:
-        return isinstance(v, str)
+        return isinstance(v, str) and _utf8(v)
+
+    def is_text_map(v: object) -> bool:
+        texts = _map_texts(v)
+        return texts is not None and all(map(_utf8, texts))
 
     return Workspace(
         id=ws_id,
@@ -274,11 +324,11 @@ def _salvage(ws_id: str, prev: bytes | None, now: datetime) -> Workspace:
         base_ref=pick("base_ref", is_str, ""),
         base_oid=pick("base_oid", is_str, ""),
         branch=ws_ref(ws_id),
-        agent=pick("agent", lambda v: isinstance(v, dict), {}),
+        agent=pick("agent", is_text_map, {}),
         parent=pick("parent", lambda v: is_str(v) and bool(ULID_RE.fullmatch(v)), None),
         created_at=_iso(now),
         ttl_s=TTL_FOREVER,
-        labels=pick("labels", lambda v: isinstance(v, dict), {}),
+        labels=pick("labels", is_text_map, {}),
         token_id=pick("token_id", lambda v: is_str(v) and bool(TOKEN_ID_RE.fullmatch(v)), None),
     )
 
@@ -362,6 +412,8 @@ class WorkspaceService:
     ) -> CreateResult:
         if not _valid_ttl(ttl_s):
             raise InvalidState(f"ttl_s must be an integer in [0, {MAX_TTL_S}], got {ttl_s!r}")
+        # 기록할 수 없는 텍스트는 원격에 아무것도 만들기 전에 거른다
+        _check_text(BAD_CREATE, [base_ref], {"agent": agent, "labels": labels})
         parent = self.get(from_ws) if from_ws else None
         src_ref = parent.branch if parent else _full_ref(base_ref)
         # peek: oid 만 필요하다 — tracking 을 옮기면 부모의 발행 기준이 남의 커밋으로 바뀐다
