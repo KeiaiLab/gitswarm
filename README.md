@@ -151,21 +151,21 @@ without the rebase returns the same `Conflict`.
 Every command prints one JSON line (except `--help`). MCP tools return the
 same object. `remote` is optional everywhere; MCP uses the server's cwd.
 
-| CLI | MCP tool | returns |
-|---|---|---|
-| `hive init <url>` | `hive_init` | `url, path` |
-| `ws create [--base] [--agent] [--run] [--ttl] [--from-ws] [--checkout] [--label k=v]` | `workspace_create` | `id, branch, branch_name, base_oid, path, token, clone, remote` |
-| `ws get <id>` | `workspace_get` | the record: `id, state, base_ref, base_oid, branch, agent, parent, created_at, ttl_s, labels, token_id, published_oid, remote` |
-| `ws list [--state]` | `workspace_list` | `workspaces, invalid, remote` |
-| `ws read <id> <path>` | `workspace_read_file` | `path, content` (UTF-8) or `content_b64`, `remote` |
-| `ws tree <id> [path]` | `workspace_tree` | `path, entries [{name, kind, oid}], remote` |
-| `ws publish <id>` | `workspace_publish` | `id, oid, remote` |
-| `ws drop <id>` | `workspace_drop` | the record, `state: dropped` |
-| `ws gc` | `workspace_gc` | `expired, invalid, conflicted, remote` |
-| `events tail [--since <oid>]` | `events_tail` | `events [{kind, id, oid, at, payload}], remote` |
-| `doctor` | `doctor` | `ok, checks [{name, ok, detail}], remote` |
-| `stats` | `stats` | `by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens, remote` |
-| `mcp` | — | runs the MCP server on stdio |
+| CLI | MCP tool | MCP arguments | returns |
+|---|---|---|---|
+| `hive init <url>` | `hive_init` | `url` | `url, path` |
+| `ws create [--base] [--agent] [--run] [--ttl] [--from-ws] [--checkout] [--label k=v]` | `workspace_create` | `remote, base_ref, agent_name, agent_run, ttl_s, from_ws, checkout, labels` | `id, branch, branch_name, base_oid, path, token, clone, remote` |
+| `ws get <id>` | `workspace_get` | `ws_id, remote` | the record: `id, state, base_ref, base_oid, branch, agent, parent, created_at, ttl_s, labels, token_id, published_oid, remote` |
+| `ws list [--state]` | `workspace_list` | `remote, state` | `workspaces, invalid, remote` |
+| `ws read <id> <path>` | `workspace_read_file` | `ws_id, path, remote` | `path, content` (UTF-8) or `content_b64`, `remote` |
+| `ws tree <id> [path]` | `workspace_tree` | `ws_id, path, remote` | `path, entries [{name, kind, oid}], remote` |
+| `ws publish <id>` | `workspace_publish` | `ws_id, remote` | `id, oid, remote` |
+| `ws drop <id>` | `workspace_drop` | `ws_id, remote` | the record, `state: dropped` |
+| `ws gc` | `workspace_gc` | `remote` | `expired, invalid, conflicted, remote` |
+| `events tail [--since <oid>]` | `events_tail` | `remote, since` | `events [{kind, id, oid, at, payload}], remote` |
+| `doctor` | `doctor` | `remote` | `ok, checks [{name, ok, detail}], remote` |
+| `stats` | `stats` | `remote` | `by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens, remote` |
+| `mcp` | — | — | runs the MCP server on stdio |
 
 - `invalid` lists records that cannot be read; `conflicted` lists expired
   workspaces whose branch someone pushed after this host last saw it. `gc`
@@ -285,20 +285,20 @@ More: [docs/recipes/ci.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs
 
 A command makes 1 to 4 remote round trips. SSH connections are multiplexed
 per hive, so a command opens no new handshake while the master lives (60 s).
-Measured against Forgejo over SSH (RTT 0.2 s), median of 3 rounds:
+Measured on 2026-10-07 against Forgejo over SSH (RTT 0.2 s), code at
+commit efcf1da; every budget passed:
 
-| command | ssh connections | new handshakes | seconds (median) | budget |
+| command | ssh connections | new handshakes | seconds | budget |
 |---|---|---|---|---|
-| hive init | 1 | 1 | 3.49 | - |
-| ws create --checkout | 4 | 0 | 1.62 | ≤ 4 conn, ≤ 2.5 s |
-| ws get | 1 | 0 | 0.29 | ≤ 1 conn |
-| ws list | 1 | 0 | 0.71 | ≤ 1 conn |
-| ws read | 2 | 0 | 0.54 | ≤ 2 conn |
-| ws tree | 2 | 0 | 0.49 | ≤ 2 conn |
-| ws publish | 4 | 0 | 1.68 | ≤ 4 conn, ≤ 2.5 s |
-| events tail | 1 | 0 | 1.30 | ≤ 1 conn |
-| ws gc | 1 | 0 | 0.64 | ≤ 1 conn |
-| ws drop | 4 | 0 | 1.71 | ≤ 4 conn |
+| ws create --checkout | 4 | 0 | 2.13 | ≤ 4 conn, ≤ 2.5 s |
+| ws get | 1 | 0 | 0.32 | ≤ 1 conn |
+| ws list | 1 | 0 | 0.31 | ≤ 1 conn |
+| ws read | 2 | 0 | 0.52 | ≤ 2 conn |
+| ws tree | 2 | 0 | 0.53 | ≤ 2 conn |
+| ws publish | 4 | 0 | 1.94 | ≤ 4 conn, ≤ 2.5 s |
+| events tail | 1 | 0 | 0.46 | ≤ 1 conn |
+| ws gc | 1 | 0 | 0.37 | ≤ 1 conn |
+| ws drop | 4 | 0 | 3.17 | ≤ 4 conn |
 
 Reproduce with `uv run scripts/bench.py <remote-url> --base <branch>`
 (exit 1 if over budget). The connection budget is the real gate; the 2.5 s

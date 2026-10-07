@@ -144,21 +144,21 @@ gitswarm 자신의 push 만 옮긴다. rebase 없이 다시 발행하면 같은 
 `--help` 를 뺀 모든 명령은 JSON 한 줄을 낸다. MCP 도구는 같은 객체를 돌려준다. `remote` 는
 어디서나 선택이다 — MCP 는 서버의 cwd 로 찾는다.
 
-| CLI | MCP 도구 | 반환 |
-|---|---|---|
-| `hive init <url>` | `hive_init` | `url, path` |
-| `ws create [--base] [--agent] [--run] [--ttl] [--from-ws] [--checkout] [--label k=v]` | `workspace_create` | `id, branch, branch_name, base_oid, path, token, clone, remote` |
-| `ws get <id>` | `workspace_get` | 레코드: `id, state, base_ref, base_oid, branch, agent, parent, created_at, ttl_s, labels, token_id, published_oid, remote` |
-| `ws list [--state]` | `workspace_list` | `workspaces, invalid, remote` |
-| `ws read <id> <path>` | `workspace_read_file` | `path, content`(UTF-8) 또는 `content_b64`, `remote` |
-| `ws tree <id> [path]` | `workspace_tree` | `path, entries [{name, kind, oid}], remote` |
-| `ws publish <id>` | `workspace_publish` | `id, oid, remote` |
-| `ws drop <id>` | `workspace_drop` | 레코드, `state: dropped` |
-| `ws gc` | `workspace_gc` | `expired, invalid, conflicted, remote` |
-| `events tail [--since <oid>]` | `events_tail` | `events [{kind, id, oid, at, payload}], remote` |
-| `doctor` | `doctor` | `ok, checks [{name, ok, detail}], remote` |
-| `stats` | `stats` | `by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens, remote` |
-| `mcp` | — | stdio MCP 서버 |
+| CLI | MCP 도구 | MCP 인자 | 반환 |
+|---|---|---|---|
+| `hive init <url>` | `hive_init` | `url` | `url, path` |
+| `ws create [--base] [--agent] [--run] [--ttl] [--from-ws] [--checkout] [--label k=v]` | `workspace_create` | `remote, base_ref, agent_name, agent_run, ttl_s, from_ws, checkout, labels` | `id, branch, branch_name, base_oid, path, token, clone, remote` |
+| `ws get <id>` | `workspace_get` | `ws_id, remote` | 레코드: `id, state, base_ref, base_oid, branch, agent, parent, created_at, ttl_s, labels, token_id, published_oid, remote` |
+| `ws list [--state]` | `workspace_list` | `remote, state` | `workspaces, invalid, remote` |
+| `ws read <id> <path>` | `workspace_read_file` | `ws_id, path, remote` | `path, content`(UTF-8) 또는 `content_b64`, `remote` |
+| `ws tree <id> [path]` | `workspace_tree` | `ws_id, path, remote` | `path, entries [{name, kind, oid}], remote` |
+| `ws publish <id>` | `workspace_publish` | `ws_id, remote` | `id, oid, remote` |
+| `ws drop <id>` | `workspace_drop` | `ws_id, remote` | 레코드, `state: dropped` |
+| `ws gc` | `workspace_gc` | `remote` | `expired, invalid, conflicted, remote` |
+| `events tail [--since <oid>]` | `events_tail` | `remote, since` | `events [{kind, id, oid, at, payload}], remote` |
+| `doctor` | `doctor` | `remote` | `ok, checks [{name, ok, detail}], remote` |
+| `stats` | `stats` | `remote` | `by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens, remote` |
+| `mcp` | — | — | stdio MCP 서버 |
 
 - `invalid` 는 읽을 수 없는 레코드, `conflicted` 는 이 호스트가 마지막으로 본 뒤 남이 push 한
   만료 workspace 다. `gc` 는 둘 다 건너뛴다 — `ws drop <id>` 로 거둔다.
@@ -267,20 +267,19 @@ Forgejo Actions 와 GitHub Actions 가 같은 문법이다. 자세히: [docs/rec
 ## 성능
 
 명령 하나는 원격 왕복 1~4회다. SSH 연결은 hive 별로 다중화되어, 마스터가 사는 동안(60 초)
-명령은 새 핸드셰이크를 열지 않는다. Forgejo(SSH, RTT 0.2 s) 실측, 3 라운드 중앙값:
+명령은 새 핸드셰이크를 열지 않는다. 2026-10-07 Forgejo(SSH, RTT 0.2 s) 실측, 코드 efcf1da — 전 예산 통과:
 
-| 명령 | ssh 연결 | 새 핸드셰이크 | 초(중앙값) | 예산 |
+| 명령 | ssh 연결 | 새 핸드셰이크 | 초 | 예산 |
 |---|---|---|---|---|
-| hive init | 1 | 1 | 3.49 | - |
-| ws create --checkout | 4 | 0 | 1.62 | ≤ 4 연결, ≤ 2.5 s |
-| ws get | 1 | 0 | 0.29 | ≤ 1 연결 |
-| ws list | 1 | 0 | 0.71 | ≤ 1 연결 |
-| ws read | 2 | 0 | 0.54 | ≤ 2 연결 |
-| ws tree | 2 | 0 | 0.49 | ≤ 2 연결 |
-| ws publish | 4 | 0 | 1.68 | ≤ 4 연결, ≤ 2.5 s |
-| events tail | 1 | 0 | 1.30 | ≤ 1 연결 |
-| ws gc | 1 | 0 | 0.64 | ≤ 1 연결 |
-| ws drop | 4 | 0 | 1.71 | ≤ 4 연결 |
+| ws create --checkout | 4 | 0 | 2.13 | ≤ 4 연결, ≤ 2.5 s |
+| ws get | 1 | 0 | 0.32 | ≤ 1 연결 |
+| ws list | 1 | 0 | 0.31 | ≤ 1 연결 |
+| ws read | 2 | 0 | 0.52 | ≤ 2 연결 |
+| ws tree | 2 | 0 | 0.53 | ≤ 2 연결 |
+| ws publish | 4 | 0 | 1.94 | ≤ 4 연결, ≤ 2.5 s |
+| events tail | 1 | 0 | 0.46 | ≤ 1 연결 |
+| ws gc | 1 | 0 | 0.37 | ≤ 1 연결 |
+| ws drop | 4 | 0 | 3.17 | ≤ 4 연결 |
 
 재현: `uv run scripts/bench.py <remote-url> --base <branch>`(예산 초과면 종료코드 1). 연결 수
 예산이 본 기준이다 — 2.5 s 예산은 공유 서버에서 빠듯하다(push 가 가끔 수 초 걸린다).
