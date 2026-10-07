@@ -179,6 +179,13 @@ def test_push_lease_stale_after_remote_moved_returns_false(tmp_path: Path):
             "error: failed to push some refs to '../remote.git'",
             True,
         ),
+        # Server-side race on create
+        (
+            "remote: error: cannot lock ref 'refs/heads/y': reference already exists\n"
+            " ! [remote rejected] 862aa4e2 -> y (reference already exists)\n"
+            "error: failed to push some refs to '../remote.git'",
+            True,
+        ),
         # Pre-receive hook decline (NOT a lease rejection)
         (
             "remote: error: hook declined\n"

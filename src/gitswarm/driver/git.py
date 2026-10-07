@@ -11,6 +11,8 @@ from gitswarm.constants import COMMIT_AUTHOR, COMMIT_EMAIL, tracking_ref
 from gitswarm.errors import RemoteError
 
 RC_LS_REMOTE_MISSING = 2
+# Four wordings measured on git 2.55: sequential stale lease; server-side race on update; server-side race on create.
+# Hook declines ("pre-receive hook declined") must NOT match.
 REJECTED_MARKERS = (
     "[rejected]",
     "stale info",
