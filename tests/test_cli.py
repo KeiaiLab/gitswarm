@@ -323,3 +323,33 @@ def test_publish_errors_name_the_next_step(inited: str):
     run("ws", "drop", out["id"], remote=inited)
     code, err = run("ws", "publish", out["id"], remote=inited)
     assert code == 4 and "create a new workspace" in err["error"]["detail"]
+
+
+def test_doctor_passes_and_names_remote(inited: str):
+    code, out = run("doctor", remote=inited)
+    assert code == 0 and out["ok"] is True and out["remote"] == inited
+    assert {c["name"] for c in out["checks"]} >= {"git", "remote", "hive"}
+
+
+def test_doctor_without_remote_skips_remote_checks(home: Path):
+    code, out = run_here("doctor")
+    assert code == 0 and out["ok"] is True and "remote" not in out
+
+
+def test_doctor_failure_exits_1(inited: str, home: Path):
+    (home / "config.toml").write_text(
+        '[remote."h"]\nadapter = "forgejo"\ncredential_file = "/nonexistent"\n'
+    )
+    code, out = run("doctor", remote=inited)
+    assert code == 1 and out["ok"] is False
+    assert [c["name"] for c in out["checks"] if not c["ok"]] == ["config"]
+
+
+def test_stats_via_cli(inited: str):
+    _, a = run("ws", "create", remote=inited)
+    run("ws", "drop", a["id"], remote=inited)
+    code, out = run("stats", remote=inited)
+    assert code == 0 and out["remote"] == inited
+    assert out["by_kind"] == {"ws.created": 1, "ws.dropped": 1}
+    assert out["by_state"] == {"dropped": 1} and out["open_oldest_age_s"] is None
+    assert out["total_events"] == 2

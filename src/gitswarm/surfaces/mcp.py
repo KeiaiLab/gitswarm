@@ -12,11 +12,13 @@ from fastmcp import FastMCP
 
 from gitswarm.constants import DEFAULT_TTL_S
 from gitswarm.errors import GitswarmError
+from gitswarm.service.stats import summarize
 from gitswarm.service.workspace import Checkout
 from gitswarm.store.hive import Hive, resolve_home
 from gitswarm.surfaces.common import (
     UsageError,
     agent_dict,
+    doctor_report,
     parse_state,
     read_payload,
     resolve_base,
@@ -144,6 +146,21 @@ def events_tail(remote: str | None = None, since: str | None = None) -> dict:
     """meta 로그를 이벤트로 돌려준다(최신순). since = 마지막으로 본 oid. Returns {events: [...]}. On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, {"events": [e.to_dict() for e in svc.events(since)]})
+
+
+@mcp.tool
+@payload
+def doctor(remote: str | None = None) -> dict:
+    """git 판본·GITSWARM_HOME·config·원격 도달·hive·ssh 다중화를 점검한다. Returns {ok, checks: [{name, ok, detail}], remote?} — ok=false 면 실패한 check 의 detail 을 본다. remote 를 못 찾으면 원격 검사는 생략."""
+    return doctor_report(remote)
+
+
+@mcp.tool
+@payload
+def stats(remote: str | None = None) -> dict:
+    """이벤트 로그 집계. Returns {ok, by_kind, by_state, open_oldest_age_s, total_events, invalid, remote} (open 이 없으면 open_oldest_age_s=null). On failure returns {ok: false, error: {kind, detail}}."""
+    svc = service(remote)
+    return with_remote(svc, summarize(svc))
 
 
 def serve() -> None:

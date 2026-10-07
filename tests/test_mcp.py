@@ -40,6 +40,8 @@ def test_tools_listed():
         "workspace_drop",
         "workspace_gc",
         "events_tail",
+        "doctor",
+        "stats",
     } <= names
 
 
@@ -204,3 +206,27 @@ def test_mcp_create_gives_clone_command(remote_url: str, home: Path):
     r = call("workspace_create", remote=remote_url)
     assert r["branch_name"] == f"gitswarm/ws/{r['id']}"
     assert r["clone"] == f"git clone -b gitswarm/ws/{r['id']} {remote_url}"
+
+
+def test_doctor_via_mcp(remote_url: str, home: Path):
+    out = call("doctor", remote=remote_url)
+    assert out["ok"] is True and out["remote"] == remote_url
+    (home / "config.toml").write_text(
+        '[remote."h"]\nadapter = "github"\nuser = "1/2"\ncredential_file = "/nonexistent"\n'
+    )
+    out = call("doctor", remote=remote_url)
+    assert out["ok"] is False
+
+
+def test_doctor_via_mcp_without_remote(home: Path):
+    out = call("doctor")
+    assert out["ok"] is True and "remote" not in out
+
+
+def test_stats_via_mcp(remote_url: str, home: Path):
+    r = _create(remote_url)
+    out = call("stats", remote=remote_url)
+    assert out["ok"] is True and out["remote"] == remote_url
+    assert out["by_state"] == {"open": 1} and out["total_events"] == 1
+    assert isinstance(out["open_oldest_age_s"], int)
+    assert r["ok"] is True

@@ -114,7 +114,7 @@ def _check_expiry(ws: Workspace) -> None:
 def _expired(ws: Workspace, now: datetime) -> bool:
     if ws.ttl_s == TTL_FOREVER:
         return False
-    born = datetime.fromisoformat(ws.created_at.replace("Z", "+00:00"))
+    born = ws.born()
     try:
         return born + timedelta(seconds=ws.ttl_s) < now
     except OverflowError:  # 9999 년 근처 — 만료가 표현 범위 밖이면 아직 아니다
@@ -189,6 +189,10 @@ class Workspace:
             raise InvalidState(f"malformed workspace record: published_oid {ws.published_oid!r}")
         _check_expiry(ws)
         return ws
+
+    def born(self) -> datetime:
+        """created_at 을 시각으로. from_json 이 이미 검증했다."""
+        return datetime.fromisoformat(self.created_at.replace("Z", "+00:00"))
 
     def with_state(self, state: WsState) -> Workspace:
         if state not in TRANSITIONS[self.state]:

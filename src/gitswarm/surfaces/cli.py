@@ -15,11 +15,13 @@ from typer._click.exceptions import UsageError as ClickUsageError
 
 from gitswarm.constants import DEFAULT_TTL_S
 from gitswarm.errors import EXIT_CODES, GitswarmError
+from gitswarm.service.stats import summarize
 from gitswarm.service.workspace import Checkout, WsState
 from gitswarm.store.hive import Hive, resolve_home
 from gitswarm.surfaces.common import (
     UsageError,
     agent_dict,
+    doctor_report,
     read_payload,
     resolve_base,
     service,
@@ -29,6 +31,7 @@ from gitswarm.surfaces.common import (
 
 REMOTE_ENV = "GITSWARM_REMOTE"
 EXIT_USAGE = 1
+EXIT_CHECK_FAILED = 1  # doctor: 검사 실패는 오류 종류가 아니라 보고다
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 hive_app = typer.Typer(no_args_is_help=True)
@@ -166,6 +169,25 @@ def events_tail(
 ) -> None:
     svc = service(remote)
     _emit(with_remote(svc, {"events": [e.to_dict() for e in svc.events(since)]}))
+
+
+# ── 진단·집계 ─────────────────────────────────────────────────
+@app.command("doctor")
+@guarded
+def doctor(remote: RemoteOpt = None) -> None:
+    """git·홈·설정·원격·hive·ssh 다중화를 점검한다. 하나라도 실패면 종료코드 1."""
+    report = doctor_report(remote)
+    typer.echo(json.dumps(report, ensure_ascii=False))
+    if not report["ok"]:
+        raise typer.Exit(EXIT_CHECK_FAILED)
+
+
+@app.command("stats")
+@guarded
+def stats(remote: RemoteOpt = None) -> None:
+    """이벤트 종류별·상태별 수, 가장 오래 열린 workspace 의 나이."""
+    svc = service(remote)
+    _emit(with_remote(svc, summarize(svc)))
 
 
 # ── mcp ──────────────────────────────────────────────────────

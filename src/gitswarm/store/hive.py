@@ -54,6 +54,11 @@ def worktree_owner(path: Path, home: Path) -> str | None:
     return None
 
 
+def hive_path(url: str, home: Path) -> Path:
+    """url 의 hive 자리. 있든 없든 계산만 한다."""
+    return home / HIVES_DIR / hive_id(url)
+
+
 @dataclass(frozen=True)
 class Hive:
     path: Path
@@ -63,7 +68,7 @@ class Hive:
     @classmethod
     def init(cls, url: str, home: Path) -> Hive:
         url = url.rstrip("/")
-        path = home / HIVES_DIR / hive_id(url)
+        path = hive_path(url, home)
         if (path / HIVE_FILE).exists():
             return cls.open(url, home)
 
@@ -81,7 +86,7 @@ class Hive:
 
     @classmethod
     def open(cls, url: str, home: Path) -> Hive:
-        path = home / HIVES_DIR / hive_id(url)
+        path = hive_path(url, home)
         if not (path / HIVE_FILE).exists():
             raise NotFound(f"hive not initialized for {url}; run `gitswarm hive init`")
         stored = _stored_url(path / HIVE_FILE)
@@ -89,3 +94,6 @@ class Hive:
 
     def worktree_dir(self, ws_id: str) -> Path:
         return self.path / WT_DIR / ws_id
+
+    def worktree_count(self) -> int:
+        return sum(1 for p in (self.path / WT_DIR).glob("*") if p.is_dir())

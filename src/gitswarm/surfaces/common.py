@@ -6,6 +6,7 @@ import base64
 from pathlib import Path
 
 from gitswarm.service.discovery import discover_remote
+from gitswarm.service.doctor import diagnose
 from gitswarm.service.workspace import WorkspaceService, WsState, open_service
 from gitswarm.store.hive import resolve_home
 
@@ -48,14 +49,24 @@ def parse_state(state: str | None) -> WsState | None:
         ) from None
 
 
+def find_remote(remote: str | None) -> str | None:
+    """주어진 원격, 없으면 cwd 로 찾은 원격."""
+    return remote or discover_remote(Path.cwd(), resolve_home())
+
+
 def resolve_remote(remote: str | None) -> str:
-    """주어진 원격, 없으면 cwd 로 찾은 원격. 둘 다 없으면 Usage."""
-    if remote:
-        return remote
-    found = discover_remote(Path.cwd(), resolve_home())
+    """find_remote 인데 못 찾으면 Usage."""
+    found = find_remote(remote)
     if found is None:
         raise UsageError(NO_REMOTE)
     return found
+
+
+def doctor_report(remote: str | None) -> dict:
+    """diagnose 결과. 원격을 찾았으면 무엇을 봤는지 `remote` 로 싣는다(없으면 원격 검사 생략)."""
+    found = find_remote(remote)
+    report = diagnose(found, resolve_home())
+    return {**report, "remote": found} if found else report
 
 
 def service(remote: str | None) -> WorkspaceService:

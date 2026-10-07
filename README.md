@@ -99,7 +99,7 @@ fail-closed 한다. `ws drop` 은 그 workspace 브랜치의 발행 안 된 원�
 ```
 uv sync --dev
 uv run ruff check src scripts tests
-uv run vulture src --min-confidence 60 --ignore-names "hive_init,ws_*,workspace_*,events_tail,mcp_serve,main,branch_name"
+uv run vulture src --min-confidence 60 --ignore-names "hive_init,ws_*,workspace_*,events_tail,mcp_serve,main,branch_name,doctor,stats"
 uv run pytest -q --cov
 ```
 

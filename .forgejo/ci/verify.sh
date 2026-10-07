@@ -26,7 +26,7 @@ uv run ruff check src scripts tests
 uv run ruff format --check src scripts tests
 # vulture: typer·fastmcp 데코레이터가 등록하는 진입점만 허용 오탐(+ console script main ·
 # asdict 로만 읽히는 CreateResult.branch_name)이다.
-uv run vulture src --min-confidence 60 --ignore-names "hive_init,ws_*,workspace_*,events_tail,mcp_serve,main,branch_name"
+uv run vulture src --min-confidence 60 --ignore-names "hive_init,ws_*,workspace_*,events_tail,mcp_serve,main,branch_name,doctor,stats"
 uv run pytest tests -q --cov --cov-report=term-missing
 uv build
 uv run --isolated --no-project --with dist/*.whl gitswarm --help >/dev/null'

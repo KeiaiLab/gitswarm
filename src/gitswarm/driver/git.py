@@ -25,6 +25,7 @@ from gitswarm.errors import RemoteError
 RC_LS_REMOTE_MISSING = 2
 RC_NO_SUCH_REMOTE = 2
 RC_FATAL = 128
+VERSION_WORD = 2
 # Four wordings measured on git 2.55: sequential stale lease; server-side race on update; server-side race on create.
 # Any "cannot lock ref" server message is lock contention with a sibling writer; the CAS loop re-fetches and retries.
 # Hook declines ("pre-receive hook declined") must NOT match.
@@ -123,12 +124,11 @@ class Git:
         if any(var in os.environ for var in CALLER_SSH_ENVS) or self._config_ssh_command:
             return {}
 
-        # 경로가 한도를 넘으면 ssh 가 "ControlPath too long" 으로 죽는다 — 다중화 없이 간다.
-        # `"` 는 ssh 의 -o 값 따옴표 안에 넣을 수 없다 — 역시 다중화 없이.
+        if self.mux_problem():
+            return {}
+
         control = self.repo / SSH_CONTROL_DIR
         socket = control / SSH_CONTROL_SOCKET
-        if len(os.fsencode(socket)) + MASTER_TEMP_SUFFIX >= SOCKET_PATH_MAX or '"' in str(socket):
-            return {}
 
         # 셸 따옴표(git 이 셸로 돈다) 안에 ssh 따옴표 — ssh 는 -o 값을 공백에서 다시 쪼갠다
         control.mkdir(mode=0o700, exist_ok=True)
@@ -139,6 +139,19 @@ class Git:
         )
         return {"GIT_SSH_COMMAND": cmd}
 
+    def mux_problem(self) -> str | None:
+        """이 레포의 ControlMaster 소켓을 쓸 수 없는 이유. 쓸 수 있으면 None."""
+        socket = self.repo / SSH_CONTROL_DIR / SSH_CONTROL_SOCKET
+        size = len(os.fsencode(socket)) + MASTER_TEMP_SUFFIX
+
+        # 경로가 한도를 넘으면 ssh 가 "ControlPath too long" 으로 죽는다 — 다중화 없이 간다.
+        # `"` 는 ssh 의 -o 값 따옴표 안에 넣을 수 없다 — 역시 다중화 없이.
+        if size >= SOCKET_PATH_MAX:
+            return f"control socket path too long ({size} >= {SOCKET_PATH_MAX} bytes): {socket}"
+        if '"' in str(socket):
+            return f"control socket path contains a double quote: {socket}"
+        return None
+
     @cached_property
     def _config_ssh_command(self) -> str:
         """git config 의 core.sshCommand. env 의 GIT_SSH_COMMAND 가 그것을 덮으므로 있으면 비켜선다."""
@@ -148,6 +161,16 @@ class Git:
         return self._run(*args, data=data).stdout.decode().strip()
 
     # ── 레포·원격 ─────────────────────────────────────────────
+    @staticmethod
+    def version() -> str:
+        """`git --version` 의 판본 낱말(예: "2.55.0"). git 을 못 돌리면 RemoteError."""
+        try:
+            p = subprocess.run(["git", "--version"], capture_output=True, check=True)
+        except (OSError, subprocess.CalledProcessError) as e:
+            raise RemoteError(f"git not runnable: {type(e).__name__}") from None
+        # "git version 2.39.3 (Apple Git-146)" — 셋째 낱말
+        return p.stdout.decode().split()[VERSION_WORD]
+
     @classmethod
     def init_bare(cls, path: Path) -> Git:
         path.parent.mkdir(parents=True, exist_ok=True)
