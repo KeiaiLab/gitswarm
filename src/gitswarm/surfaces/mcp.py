@@ -124,5 +124,12 @@ def workspace_gc(remote: str) -> dict:
     return {"expired": _svc(remote).gc()}
 
 
+@mcp.tool
+@payload
+def events_tail(remote: str, since: str | None = None) -> dict:
+    """meta 로그를 이벤트로 돌려준다(최신순). since = 마지막으로 본 oid. Returns {events: [...]}. On failure returns {ok: false, error: {kind, detail}}."""
+    return {"events": [e.to_dict() for e in _svc(remote).events(since)]}
+
+
 def serve() -> None:
     mcp.run()

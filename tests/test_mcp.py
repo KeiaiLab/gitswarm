@@ -108,3 +108,12 @@ def test_publish_returns_full_oid(remote_url: str, home: Path):
     call("hive_init", url=remote_url)
     r = _create(remote_url, checkout=True)
     assert len(call("workspace_publish", remote=remote_url, ws_id=r["id"])["oid"]) == 40
+
+
+def test_events_tail_via_mcp(remote_url: str, home: Path):
+    call("hive_init", url=remote_url)
+    r = _create(remote_url)
+    call("workspace_drop", remote=remote_url, ws_id=r["id"])
+    out = call("events_tail", remote=remote_url)
+    assert out["ok"] is True
+    assert [e["kind"] for e in out["events"]] == ["ws.dropped", "ws.created"]

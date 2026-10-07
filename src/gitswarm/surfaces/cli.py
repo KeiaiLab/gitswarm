@@ -149,6 +149,15 @@ def ws_gc(remote: RemoteOpt = None) -> None:
     _emit({"expired": _svc(remote).gc()})
 
 
+# ── events ───────────────────────────────────────────────────
+@events_app.command("tail")
+@guarded
+def events_tail(
+    remote: RemoteOpt = None, since: Annotated[str | None, typer.Option("--since")] = None
+) -> None:
+    _emit({"events": [e.to_dict() for e in _svc(remote).events(since)]})
+
+
 # ── mcp ──────────────────────────────────────────────────────
 @app.command("mcp")
 def mcp_serve() -> None:

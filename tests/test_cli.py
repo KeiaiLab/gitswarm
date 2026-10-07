@@ -151,3 +151,13 @@ def test_main_success_exits_zero(monkeypatch, capsys, remote_url: str, home: Pat
         assert not exc.code
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert out["ok"] is True
+
+
+def test_events_tail_via_cli(inited: str):
+    code, out = run("ws", "create", "--base", "main", remote=inited)
+    assert code == 0
+    run("ws", "drop", out["id"], remote=inited)
+
+    code, tail = run("events", "tail", remote=inited)
+    assert code == 0 and tail["ok"] is True
+    assert [e["kind"] for e in tail["events"]] == ["ws.dropped", "ws.created"]

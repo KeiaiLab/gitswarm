@@ -31,7 +31,7 @@ from gitswarm.constants import (
 )
 from gitswarm.driver.git import Git
 from gitswarm.errors import Conflict, InvalidState, NotFound
-from gitswarm.events import Event, Sink
+from gitswarm.events import Event, Sink, parse_subject, sinks_from_config
 from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
 
@@ -319,6 +319,22 @@ class WorkspaceService:
             expired.append(ws.id)
         return expired
 
+    def events(self, since: str | None) -> list[Event]:
+        out = []
+        for entry in self.store.log(since):
+            kind, ws_id = parse_subject(entry.subject)
+            raw = self.store.read_at(entry.oid, meta_path(ws_id)) or b"{}"
+            out.append(
+                Event(
+                    kind=kind,
+                    id=ws_id,
+                    oid=entry.oid,
+                    at=entry.committed_at,
+                    payload=json.loads(raw),
+                )
+            )
+        return out
+
     # ── 공통 ──────────────────────────────────────────────────
     def _write(self, ws: Workspace, kind: str) -> str:
         oid = self.store.apply(Change(meta_path(ws.id), ws.to_json(), f"{kind} {ws.id}"))
@@ -330,8 +346,6 @@ class WorkspaceService:
 
 def open_service(remote_url: str, home: Path) -> WorkspaceService:
     """CLI·MCP 가 쓰는 조립 지점. Hive 가 없으면 NotFound."""
-    from gitswarm.events import sinks_from_config  # Task 10
-
     hive = Hive.open(remote_url, home)
     config = load_config(home)
     return WorkspaceService(
