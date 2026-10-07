@@ -1,3 +1,4 @@
+import multiprocessing as mp
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,24 @@ def test_apply_creates_orphan_then_appends(store: MetaStore):
     assert store.read("ws/a.json") == b'{"state":"dropped"}'
     assert store.read_at(c1, "ws/a.json") == b"{}"
     assert store.read_at(c3, "ws/b.json") == b"{}"
+
+
+def _writer(remote_url: str, home: str, name: str) -> None:
+    hive = Hive.open(remote_url, Path(home))
+    MetaStore(hive.git).apply(Change(f"ws/{name}.json", name.encode(), f"ws.created {name}"))
+
+
+def test_concurrent_writers_all_land(remote_url: str, home: Path):
+    Hive.init(remote_url, home)
+    ctx = mp.get_context("spawn")
+    procs = [ctx.Process(target=_writer, args=(remote_url, str(home), n)) for n in ("p", "q", "r")]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(60)
+        assert p.exitcode == 0
+    store = MetaStore(Hive.open(remote_url, home).git)
+    assert store.list("ws/") == ["ws/p.json", "ws/q.json", "ws/r.json"]
 
 
 def test_apply_retries_on_concurrent_change(remote_url: str, home: Path):
