@@ -11,6 +11,9 @@ META_REF = f"{HEADS}{REF_PREFIX}meta"
 WS_DIR = "ws"  # meta 트리 안의 디렉터리: ws/<id>.json
 
 META_CAS_RETRIES = 5
+CAS_BACKOFF_BASE_S = 0.05  # 재시도 간격 = min(MAX, BASE·2^n) × U(0.5, 1.5)
+CAS_BACKOFF_MAX_S = 1.0
+FETCH_LOCK_RETRIES = 5  # 같은 hive 를 쓰는 형제 프로세스와의 로컬 ref 잠금 경합
 DEFAULT_TTL_S = 7200
 TTL_FOREVER = 0
 ULID_LEN = 26

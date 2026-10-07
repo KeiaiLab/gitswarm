@@ -4,10 +4,19 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from gitswarm.constants import COMMIT_AUTHOR, COMMIT_EMAIL, peek_ref, tracking_ref
+from gitswarm.backoff import backoff_s
+from gitswarm.constants import (
+    COMMIT_AUTHOR,
+    COMMIT_EMAIL,
+    FETCH_LOCK_RETRIES,
+    peek_ref,
+    tracking_ref,
+)
 from gitswarm.errors import RemoteError
 
 RC_LS_REMOTE_MISSING = 2
@@ -21,6 +30,8 @@ REJECTED_MARKERS = (
     "reference already exists",
     "cannot lock ref",
 )
+# 로컬 ref 디렉터리를 형제 프로세스가 동시에 만들거나 지울 때(fetch 가 tracking·peek ref 를 쓸 때).
+LOCAL_LOCK_MARKER = "cannot lock ref"
 MISSING_REMOTE_REF_MARKERS = ("couldn't find remote ref", "remote ref does not exist")
 
 
@@ -113,8 +124,22 @@ class Git:
             return None
         return p.stdout.decode().split()[0]
 
+    def _lock_retry(self, op: Callable[[], str | None]) -> str | None:
+        """같은 hive 의 형제 프로세스와 로컬 ref 잠금이 겹치면 잠시 뒤 다시 한다."""
+        for attempt in range(FETCH_LOCK_RETRIES - 1):
+            try:
+                return op()
+            except RemoteError as e:
+                if LOCAL_LOCK_MARKER not in e.detail:
+                    raise
+            time.sleep(backoff_s(attempt))
+        return op()
+
     def fetch(self, ref: str) -> str | None:
         """origin/<ref> 를 tracking ref 로 강제 갱신. 원격에 없으면 tracking 도 지우고 None."""
+        return self._lock_retry(lambda: self._fetch_once(ref))
+
+    def _fetch_once(self, ref: str) -> str | None:
         if self.ls_remote(ref) is None:
             self._run("update-ref", "-d", tracking_ref(ref))
             return None
@@ -123,6 +148,9 @@ class Git:
 
     def peek(self, ref: str) -> str | None:
         """원격 ref 를 peek ref 로 받아 oid 를 돌려준다. tracking ref 는 건드리지 않는다."""
+        return self._lock_retry(lambda: self._peek_once(ref))
+
+    def _peek_once(self, ref: str) -> str | None:
         if self.ls_remote(ref) is None:
             self._run("update-ref", "-d", peek_ref(ref))
             return None

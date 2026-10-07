@@ -260,3 +260,50 @@ def test_delete_remote_lease_on_missing_is_idempotent(repo: Git):
     base = repo.fetch("refs/heads/main")
     assert repo.delete_remote("refs/heads/gitswarm/ws/gone", expected=base) is True
     assert repo.delete_remote("refs/heads/gitswarm/ws/gone", expected=None) is True
+
+
+LOCAL_LOCK_ERR = (
+    "error: cannot lock ref 'refs/remotes/origin/gitswarm/meta': unable to create "
+    "directory for '/h/repo.git/refs/remotes/origin/gitswarm/meta.lock'"
+)
+
+
+def _flaky_fetch(monkeypatch: pytest.MonkeyPatch, failures: int, err: str) -> list[int]:
+    """`git fetch` 가 처음 failures 번 err 로 실패한다. 반환 = 시도 횟수 칸."""
+    real = Git._run
+    calls = [0]
+
+    def run(self, *args, **kw):
+        if args[0] == "fetch":
+            calls[0] += 1
+            if calls[0] <= failures:
+                raise RemoteError(err)
+        return real(self, *args, **kw)
+
+    monkeypatch.setattr(Git, "_run", run)
+    monkeypatch.setattr("gitswarm.driver.git.time.sleep", lambda s: None)
+    return calls
+
+
+@pytest.mark.parametrize("op", ["fetch", "peek"])
+def test_local_ref_lock_race_is_retried(repo: Git, monkeypatch: pytest.MonkeyPatch, op: str):
+    calls = _flaky_fetch(monkeypatch, 2, LOCAL_LOCK_ERR)
+    oid = getattr(repo, op)("refs/heads/main")
+    assert oid and len(oid) == 40
+    assert calls[0] == 3
+
+
+def test_local_ref_lock_race_gives_up(repo: Git, monkeypatch: pytest.MonkeyPatch):
+    from gitswarm.constants import FETCH_LOCK_RETRIES
+
+    calls = _flaky_fetch(monkeypatch, 99, LOCAL_LOCK_ERR)
+    with pytest.raises(RemoteError):
+        repo.fetch("refs/heads/main")
+    assert calls[0] == FETCH_LOCK_RETRIES
+
+
+def test_other_fetch_errors_are_not_retried(repo: Git, monkeypatch: pytest.MonkeyPatch):
+    calls = _flaky_fetch(monkeypatch, 1, "fatal: repository not found")
+    with pytest.raises(RemoteError):
+        repo.fetch("refs/heads/main")
+    assert calls[0] == 1
