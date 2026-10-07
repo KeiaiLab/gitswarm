@@ -11,7 +11,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 
@@ -24,10 +24,12 @@ from gitswarm.constants import (
     HEADS,
     TTL_FOREVER,
     meta_path,
+    tracking_ref,
     ws_branch,
     ws_ref,
 )
-from gitswarm.errors import InvalidState, NotFound
+from gitswarm.driver.git import Git
+from gitswarm.errors import Conflict, InvalidState, NotFound
 from gitswarm.events import Event, Sink
 from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
@@ -60,7 +62,7 @@ TRANSITIONS: dict[WsState, frozenset[WsState]] = {
 
 
 def _check_id(ws_id: str) -> str:
-    if not ULID_RE.match(ws_id):
+    if not ULID_RE.fullmatch(ws_id):
         raise NotFound(f"invalid workspace id: {ws_id!r}")
     return ws_id
 
@@ -218,13 +220,44 @@ class WorkspaceService:
         t = self.adapter.issue_token(repo_name(self.hive.url), ws_id, Scope.WRITE)
         return (t.id, t.secret)
 
+    # ── 읽기 ──────────────────────────────────────────────────
+    def _published_rev(self, ws: Workspace) -> str:
+        oid = self.hive.git.fetch(ws.branch)
+        if oid is None:
+            raise NotFound(f"branch {ws.branch} not on remote")
+        return oid
+
+    @staticmethod
+    def _safe_path(path: str) -> str:
+        if not path or path.startswith("/") or ".." in path.split("/"):
+            raise NotFound(f"invalid path: {path!r}")
+        return path
+
+    def read(self, ws_id: str, path: str) -> bytes:
+        ws = self.get(ws_id)
+        rev = f"{self._published_rev(ws)}:{self._safe_path(path)}"
+        if not self.hive.git.exists(rev):
+            raise NotFound(f"{path} not in {ws_id}")
+        return self.hive.git.cat_file(rev)
+
+    def tree(self, ws_id: str, path: str = "") -> list[dict]:
+        ws = self.get(ws_id)
+        rev = self._published_rev(ws)
+        if path:
+            rev = f"{rev}:{self._safe_path(path)}"
+            if not self.hive.git.exists(rev):
+                raise NotFound(f"{path} not in {ws_id}")
+        return [{"name": e.name, "kind": e.kind, "oid": e.oid} for e in self.hive.git.ls_tree(rev)]
+
     # ── 폐기 ──────────────────────────────────────────────────
     def drop(self, ws_id: str) -> Workspace:
         ws = self.get(ws_id)
         if ws.state is WsState.DROPPED:
             return ws
+        return self._drop_as(ws, EV_DROPPED)
 
-        wt = self.hive.worktree_dir(ws_id)
+    def _drop_as(self, ws: Workspace, kind: str) -> Workspace:
+        wt = self.hive.worktree_dir(ws.id)
         if wt.exists():
             self.hive.git.worktree_remove(wt)
         self.hive.git.delete_remote(ws.branch)
@@ -234,12 +267,41 @@ class WorkspaceService:
             self.adapter.revoke_token(ws.token_id)
 
         dropped = ws.with_state(WsState.DROPPED)
-        self._write(dropped, EV_DROPPED)
+        self._write(dropped, kind)
         return dropped
 
+    # ── 발행 ──────────────────────────────────────────────────
     def publish(self, ws_id: str) -> str:
         ws = self.get(ws_id).with_state(WsState.PUBLISHED)
-        return self._write(ws, EV_PUBLISHED)
+        wt = self.hive.worktree_dir(ws_id)
+        if not wt.exists():
+            raise InvalidState(f"{ws_id} has no local worktree; push the branch with git instead")
+
+        head = Git(wt).rev_parse("HEAD")
+        if head is None:
+            raise InvalidState(f"{ws_id} worktree has no HEAD")
+
+        # 기대값 = 마지막으로 알던 원격. 지금 fetch 하면 남의 커밋을 덮어쓰게 되므로 하지 않는다.
+        last_known = self.hive.git.rev_parse(tracking_ref(ws.branch))
+        if not self.hive.git.push(head, ws.branch, expected=last_known):
+            raise Conflict(f"{ws.branch} moved on remote; run `git pull --rebase` in the worktree")
+
+        self._write(ws, EV_PUBLISHED)
+        return head
+
+    # ── 회수 ──────────────────────────────────────────────────
+    def gc(self) -> list[str]:
+        now = self.clock()
+        expired = []
+        for ws in self.list(WsState.OPEN):
+            if ws.ttl_s == TTL_FOREVER:
+                continue
+            born = datetime.fromisoformat(ws.created_at.replace("Z", "+00:00"))
+            if born + timedelta(seconds=ws.ttl_s) >= now:
+                continue
+            self._drop_as(ws, EV_EXPIRED)
+            expired.append(ws.id)
+        return expired
 
     # ── 공통 ──────────────────────────────────────────────────
     def _write(self, ws: Workspace, kind: str) -> str:
