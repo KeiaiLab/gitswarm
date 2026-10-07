@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import time
 from collections.abc import Callable
@@ -42,6 +43,17 @@ def is_lease_rejection(stderr: str) -> bool:
     """push stderr 가 lease 거절(재시도 대상)인지. 훅 거절·권한 오류는 아니다."""
     return any(marker in stderr for marker in REJECTED_MARKERS)
 
+
+# SSH 다중화: 명령 하나의 git 호출들이(그리고 ControlPersist 동안 뒤 명령들도) 핸드셰이크 하나를
+# 나눠 쓴다. 호출마다 새 SSH 를 열면 RTT 0.2 s 원격에서 명령당 수 초가 든다.
+NETWORK_COMMANDS = frozenset({"fetch", "push", "ls-remote"})
+CALLER_SSH_ENVS = ("GIT_SSH_COMMAND", "GIT_SSH")
+SSH_CONTROL_DIR = ".ssh-control"
+# %C(40자 해시) 대신 고정 이름 — hive 하나 = 원격 하나라 충분하고, %C 면 기본 홈에서도 한도를 넘는다
+SSH_CONTROL_SOCKET = "mux"
+SSH_CONTROL_PERSIST_S = 60
+SOCKET_PATH_MAX = 104  # sun_path 바이트 한도(macOS 104 · Linux 108 중 작은 쪽)
+MASTER_TEMP_SUFFIX = 17  # ssh 는 마스터 소켓을 "<path>.<16자>" 로 만든 뒤 옮긴다
 
 BLOB_MODE = "100644"
 TREE_MODE = "040000"
@@ -85,6 +97,8 @@ class Git:
             # 판정이 git 문구(거절·없음·up-to-date)에 기댄다 — 번역되면 안 된다
             "LC_ALL": "C",
         }
+        if args[0] in NETWORK_COMMANDS:
+            env |= self._ssh_env()
         p = subprocess.run(
             ["git", "-C", str(self.repo), *args],
             input=data,
@@ -96,6 +110,25 @@ class Git:
                 p.stderr.decode(errors="replace").strip() or f"git {args[0]} rc={p.returncode}"
             )
         return p
+
+    def _ssh_env(self) -> dict[str, str]:
+        """hive 별 ControlMaster 소켓을 거는 GIT_SSH_COMMAND. 호출자가 ssh 를 정했으면 그것이 이긴다."""
+        if any(var in os.environ for var in CALLER_SSH_ENVS):
+            return {}
+
+        # 경로가 한도를 넘으면 ssh 가 "ControlPath too long" 으로 죽는다 — 다중화 없이 간다
+        control = self.repo / SSH_CONTROL_DIR
+        socket = control / SSH_CONTROL_SOCKET
+        if len(os.fsencode(socket)) + MASTER_TEMP_SUFFIX >= SOCKET_PATH_MAX:
+            return {}
+
+        control.mkdir(mode=0o700, exist_ok=True)
+        path = shlex.quote(str(socket).replace("%", "%%"))  # ssh 는 % 를 토큰으로 편다
+        cmd = (
+            f"ssh -o ControlMaster=auto -o ControlPath={path}"
+            f" -o ControlPersist={SSH_CONTROL_PERSIST_S}"
+        )
+        return {"GIT_SSH_COMMAND": cmd}
 
     def _out(self, *args: str, data: bytes | None = None) -> str:
         return self._run(*args, data=data).stdout.decode().strip()

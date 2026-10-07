@@ -1,3 +1,5 @@
+import shlex
+import stat
 import subprocess
 from pathlib import Path
 
@@ -359,3 +361,69 @@ def test_is_ancestor(repo: Git):
     child = repo.commit_tree(repo.build_tree({}), [base], "child")
     assert repo.is_ancestor(base, child) is True
     assert repo.is_ancestor(child, base) is False
+
+
+def _captured_env(monkeypatch: pytest.MonkeyPatch, repo: Git, *args: str) -> dict:
+    """repo._run(*args) 가 git 에 넘기는 env."""
+    seen: dict = {}
+
+    def run(cmd, **kw):
+        seen.update(kw["env"])
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr("gitswarm.driver.git.subprocess.run", run)
+    repo._run(*args)
+    return seen
+
+
+def test_network_calls_multiplex_ssh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from gitswarm.driver.git import SSH_CONTROL_DIR, SSH_CONTROL_PERSIST_S
+
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.delenv("GIT_SSH", raising=False)
+    monkeypatch.setattr("gitswarm.driver.git.SOCKET_PATH_MAX", 4096)  # tmp_path 는 길다
+    repo = Git(tmp_path / "a b.git")  # 공백 — 셸이 해석하는 명령에 경로가 따옴표로 든다
+    repo.repo.mkdir()
+
+    cmd = _captured_env(monkeypatch, repo, "fetch")["GIT_SSH_COMMAND"]
+    control = repo.repo / SSH_CONTROL_DIR
+    opts = shlex.split(cmd)
+    assert opts[0] == "ssh"
+    assert "ControlMaster=auto" in opts
+    assert f"ControlPersist={SSH_CONTROL_PERSIST_S}" in opts
+    assert next(o for o in opts if o.startswith("ControlPath=")).startswith(
+        f"ControlPath={control}/"
+    )
+    assert stat.S_IMODE(control.stat().st_mode) == 0o700
+
+
+def test_local_calls_do_not_touch_ssh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from gitswarm.driver.git import SSH_CONTROL_DIR
+
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.setattr("gitswarm.driver.git.SOCKET_PATH_MAX", 4096)
+    repo = Git(tmp_path / "w")
+    repo.repo.mkdir()
+    assert "GIT_SSH_COMMAND" not in _captured_env(monkeypatch, repo, "rev-parse")
+    assert not (repo.repo / SSH_CONTROL_DIR).exists()
+
+
+@pytest.mark.parametrize("var", ["GIT_SSH_COMMAND", "GIT_SSH"])
+def test_caller_ssh_setting_wins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, var: str):
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.setenv(var, "/opt/counting-ssh")
+    monkeypatch.setattr("gitswarm.driver.git.SOCKET_PATH_MAX", 4096)
+    repo = Git(tmp_path / "r.git")
+    repo.repo.mkdir()
+    env = _captured_env(monkeypatch, repo, "push")
+    assert env[var] == "/opt/counting-ssh"
+    assert "ControlMaster" not in env.get("GIT_SSH_COMMAND", "")
+
+
+def test_long_hive_path_skips_multiplexing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """제어 소켓 경로가 sun_path 한도를 넘으면 ssh 가 죽는다 — 다중화 없이 간다."""
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.delenv("GIT_SSH", raising=False)
+    repo = Git(tmp_path / ("d" * 120))
+    repo.repo.mkdir()
+    assert "GIT_SSH_COMMAND" not in _captured_env(monkeypatch, repo, "ls-remote")
