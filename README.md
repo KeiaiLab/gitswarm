@@ -106,7 +106,8 @@ uv run pytest -q --cov
 
 명령 하나는 원격 왕복 1~4회, SSH 핸드셰이크는 hive 별 다중화로 60 초 안에 1회다. Forgejo(SSH,
 RTT 0.2 s) 실측 중앙값 — create 1.6 s · publish 1.7 s · drop 1.7 s · get 0.3 s · read 0.5 s
-(`uv run scripts/bench.py <remote-url> --base stable`, 예산 초과 시 rc 1).
+(`uv run scripts/bench.py <remote-url> --base stable`, 예산 초과 시 rc 1). 연결 수 예산이 본 기준이다 —
+2.5 s 지연 예산은 공유 서버에서 경계라 가끔의 rc 1 은 서버 push 지연(회당 0.5~1.2 s, 가끔 수 초)일 수 있다.
 
 ## 로드맵
 

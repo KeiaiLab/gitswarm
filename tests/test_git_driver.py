@@ -364,10 +364,13 @@ def test_is_ancestor(repo: Git):
 
 
 def _captured_env(monkeypatch: pytest.MonkeyPatch, repo: Git, *args: str) -> dict:
-    """repo._run(*args) 가 git 에 넘기는 env."""
+    """repo._run(*args) 가 git 에 넘기는 env. `git config` 조회와 git 밖 명령은 진짜로 돈다."""
+    real = subprocess.run
     seen: dict = {}
 
     def run(cmd, **kw):
+        if cmd[0] != "git" or cmd[3] == "config":
+            return real(cmd, **kw)
         seen.update(kw["env"])
         return subprocess.CompletedProcess(cmd, 0, b"", b"")
 
@@ -377,24 +380,59 @@ def _captured_env(monkeypatch: pytest.MonkeyPatch, repo: Git, *args: str) -> dic
 
 
 def test_network_calls_multiplex_ssh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    from gitswarm.driver.git import SSH_CONTROL_DIR, SSH_CONTROL_PERSIST_S
+    """ssh 가 실제로 읽는 ControlPath 가 소켓 경로 그대로다(공백 포함). ssh -G 는 네트워크를 안 탄다."""
+    from gitswarm.driver.git import SSH_CONTROL_DIR, SSH_CONTROL_PERSIST_S, SSH_CONTROL_SOCKET
 
     monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
     monkeypatch.delenv("GIT_SSH", raising=False)
     monkeypatch.setattr("gitswarm.driver.git.SOCKET_PATH_MAX", 4096)  # tmp_path 는 길다
-    repo = Git(tmp_path / "a b.git")  # 공백 — 셸이 해석하는 명령에 경로가 따옴표로 든다
-    repo.repo.mkdir()
+    repo = Git.init_bare(tmp_path / "a b.git")
 
     cmd = _captured_env(monkeypatch, repo, "fetch")["GIT_SSH_COMMAND"]
     control = repo.repo / SSH_CONTROL_DIR
     opts = shlex.split(cmd)
     assert opts[0] == "ssh"
-    assert "ControlMaster=auto" in opts
-    assert f"ControlPersist={SSH_CONTROL_PERSIST_S}" in opts
-    assert next(o for o in opts if o.startswith("ControlPath=")).startswith(
-        f"ControlPath={control}/"
-    )
+    cfg = subprocess.run(
+        [*opts, "-G", "example.com"], capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    assert f"controlpath {control / SSH_CONTROL_SOCKET}" in cfg
+    assert "controlmaster auto" in cfg
+    assert f"controlpersist {SSH_CONTROL_PERSIST_S}" in cfg
     assert stat.S_IMODE(control.stat().st_mode) == 0o700
+
+
+def test_double_quote_in_path_skips_multiplexing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.delenv("GIT_SSH", raising=False)
+    monkeypatch.setattr("gitswarm.driver.git.SOCKET_PATH_MAX", 4096)
+    repo = Git.init_bare(tmp_path / 'q"x.git')
+    assert "GIT_SSH_COMMAND" not in _captured_env(monkeypatch, repo, "fetch")
+
+
+def test_core_ssh_command_wins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.delenv("GIT_SSH", raising=False)
+    monkeypatch.setattr("gitswarm.driver.git.SOCKET_PATH_MAX", 4096)
+    repo = Git.init_bare(tmp_path / "r.git")
+    git("config", "core.sshCommand", "ssh -i /k", cwd=repo.repo)
+    assert "GIT_SSH_COMMAND" not in _captured_env(monkeypatch, repo, "push")
+
+
+def test_git_messages_are_untranslated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("LC_ALL", "ko_KR.UTF-8")
+    repo = Git(tmp_path)
+    assert _captured_env(monkeypatch, repo, "rev-parse")["LC_ALL"] == "C"
+
+
+def test_up_to_date_echoed_by_hook_is_not_the_marker(repo: Git, monkeypatch: pytest.MonkeyPatch):
+    """서버 훅이 그 문구를 찍어도 실제 갱신은 성공이다 — 문구는 한 줄 전체로만 맞춘다."""
+    err = b"remote: Everything up-to-date\nTo /r.git\n   1111111..2222222  2222222 -> x\n"
+
+    def run(self, *args, **kw):
+        return subprocess.CompletedProcess(args, 0, b"", err)
+
+    monkeypatch.setattr(Git, "_run", run)
+    assert repo.push("2" * 40, "refs/heads/x", expected="1" * 40) is True
 
 
 def test_local_calls_do_not_touch_ssh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

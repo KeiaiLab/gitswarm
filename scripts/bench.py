@@ -53,7 +53,7 @@ LOG_MUX = "mux"
 
 WRAPPER = """#!{python}
 import os, stat, sys
-path = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("{opt}")), None)
+path = next((a.split("=", 1)[1].strip('"') for a in sys.argv if a.startswith("{opt}")), None)
 try:
     mux = path is not None and stat.S_ISSOCK(os.stat(path).st_mode)
 except OSError:
@@ -173,8 +173,14 @@ def _cycle(base: str, env: dict, log: Path, rows: list[Row]) -> None:
         _run("ws publish", ["ws", "publish", ws_id], env, log, rows)
         _run("events tail", ["events", "tail"], env, log, rows)
         _run("ws gc", ["ws", "gc"], env, log, rows)
-    finally:
-        _run("ws drop", ["ws", "drop", ws_id], env, log, rows)
+    except BaseException:
+        # 원래 실패를 지킨다 — 정리용 drop 의 실패는 stderr 로만
+        try:
+            _run("ws drop", ["ws", "drop", ws_id], env, log, rows)
+        except SystemExit as e:
+            print(e, file=sys.stderr)
+        raise
+    _run("ws drop", ["ws", "drop", ws_id], env, log, rows)
 
 
 def main() -> int:
@@ -186,6 +192,13 @@ def main() -> int:
 
     # 짧은 경로 — ssh 제어 소켓 경로 한도(104 바이트) 안에 든다
     tmp = Path(tempfile.mkdtemp(prefix="gsb-", dir="/tmp"))
+    try:
+        return _bench(a.remote, a.base, a.rounds, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _bench(remote: str, base: str, rounds: int, tmp: Path) -> int:
     bin_dir = tmp / "bin"
     bin_dir.mkdir()
     log = tmp / "ssh.log"
@@ -193,18 +206,17 @@ def main() -> int:
     env = {k: v for k, v in os.environ.items() if k not in ("GIT_SSH_COMMAND", "GIT_SSH")}
     env |= {
         "GITSWARM_HOME": str(tmp / "home"),
-        "GITSWARM_REMOTE": a.remote,
+        "GITSWARM_REMOTE": remote,
         "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
     }
 
     rows: list[Row] = []
-    _run("hive init", ["hive", "init", a.remote], env, log, rows)
-    for _ in range(a.rounds):
-        _cycle(a.base, env, log, rows)
+    _run("hive init", ["hive", "init", remote], env, log, rows)
+    for _ in range(rounds):
+        _cycle(base, env, log, rows)
 
     summary = _summary(rows)
     print(_table(summary))
-    shutil.rmtree(tmp, ignore_errors=True)
     return 1 if any(_over(r) for r in summary) else 0
 
 

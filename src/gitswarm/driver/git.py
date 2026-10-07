@@ -8,6 +8,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 from gitswarm.backoff import backoff_s
@@ -49,7 +50,8 @@ def is_lease_rejection(stderr: str) -> bool:
 NETWORK_COMMANDS = frozenset({"fetch", "push", "ls-remote"})
 CALLER_SSH_ENVS = ("GIT_SSH_COMMAND", "GIT_SSH")
 SSH_CONTROL_DIR = ".ssh-control"
-# %C(40자 해시) 대신 고정 이름 — hive 하나 = 원격 하나라 충분하고, %C 면 기본 홈에서도 한도를 넘는다
+# %C(40자 해시) 대신 고정 이름 — %C 면 기본 홈에서도 한도를 넘는다.
+# hive 하나 = 원격 하나일 때만 안전하다(set_origin 은 있는 hive 의 원격을 바꾸지 않는다).
 SSH_CONTROL_SOCKET = "mux"
 SSH_CONTROL_PERSIST_S = 60
 SOCKET_PATH_MAX = 104  # sun_path 바이트 한도(macOS 104 · Linux 108 중 작은 쪽)
@@ -113,22 +115,29 @@ class Git:
 
     def _ssh_env(self) -> dict[str, str]:
         """hive 별 ControlMaster 소켓을 거는 GIT_SSH_COMMAND. 호출자가 ssh 를 정했으면 그것이 이긴다."""
-        if any(var in os.environ for var in CALLER_SSH_ENVS):
+        if any(var in os.environ for var in CALLER_SSH_ENVS) or self._config_ssh_command:
             return {}
 
-        # 경로가 한도를 넘으면 ssh 가 "ControlPath too long" 으로 죽는다 — 다중화 없이 간다
+        # 경로가 한도를 넘으면 ssh 가 "ControlPath too long" 으로 죽는다 — 다중화 없이 간다.
+        # `"` 는 ssh 의 -o 값 따옴표 안에 넣을 수 없다 — 역시 다중화 없이.
         control = self.repo / SSH_CONTROL_DIR
         socket = control / SSH_CONTROL_SOCKET
-        if len(os.fsencode(socket)) + MASTER_TEMP_SUFFIX >= SOCKET_PATH_MAX:
+        if len(os.fsencode(socket)) + MASTER_TEMP_SUFFIX >= SOCKET_PATH_MAX or '"' in str(socket):
             return {}
 
+        # 셸 따옴표(git 이 셸로 돈다) 안에 ssh 따옴표 — ssh 는 -o 값을 공백에서 다시 쪼갠다
         control.mkdir(mode=0o700, exist_ok=True)
-        path = shlex.quote(str(socket).replace("%", "%%"))  # ssh 는 % 를 토큰으로 편다
+        path = str(socket).replace("%", "%%")  # ssh 는 % 를 토큰으로 편다
+        control_path = shlex.quote('ControlPath="' + path + '"')
         cmd = (
-            f"ssh -o ControlMaster=auto -o ControlPath={path}"
-            f" -o ControlPersist={SSH_CONTROL_PERSIST_S}"
+            f"ssh -o ControlMaster=auto -o {control_path} -o ControlPersist={SSH_CONTROL_PERSIST_S}"
         )
         return {"GIT_SSH_COMMAND": cmd}
+
+    @cached_property
+    def _config_ssh_command(self) -> str:
+        """git config 의 core.sshCommand. env 의 GIT_SSH_COMMAND 가 그것을 덮으므로 있으면 비켜선다."""
+        return self._run("config", "--get", "core.sshCommand", ok_rc=(0, 1)).stdout.decode().strip()
 
     def _out(self, *args: str, data: bytes | None = None) -> str:
         return self._run(*args, data=data).stdout.decode().strip()
@@ -210,7 +219,8 @@ class Git:
 
         # 원격이 이미 oid 면 git 은 lease 를 건너뛴다 — 기대값이 그 oid 였을 때만 성공이다
         if p.returncode == 0:
-            return UP_TO_DATE_MARKER not in err or expected == oid
+            # 한 줄 전체로 맞춘다 — 서버 훅이 같은 문구를 "remote: …" 로 찍을 수 있다
+            return UP_TO_DATE_MARKER not in err.splitlines() or expected == oid
         if is_lease_rejection(err):
             return False
         raise RemoteError(err.strip())

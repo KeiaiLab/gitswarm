@@ -13,8 +13,8 @@ from gitswarm.store.hive import Hive
 from gitswarm.store.meta import MetaStore
 from tests.conftest import count_network, git
 
-# 동작별 상한: create = base peek·브랜치 push·meta fetch·meta push (+1 여유)
-BUDGET_CREATE = 5
+# 동작별 상한: create = base peek·브랜치 push·meta fetch·meta push
+BUDGET_CREATE = 4
 BUDGET_PUBLISH = 4
 BUDGET_DROP = 4
 BUDGET_READ = 2
