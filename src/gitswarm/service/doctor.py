@@ -17,13 +17,11 @@ from gitswarm.driver.git import Git
 from gitswarm.errors import InvalidState, NotFound, RemoteError
 from gitswarm.events import sinks_from_config
 from gitswarm.store.hive import REPO_DIR, Hive, hive_path
+from gitswarm.urls import is_ssh_url, validate_remote_url
 
 MIN_GIT = (2, 40, 0)
 GIT_VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 CREDENTIAL_ADAPTERS = frozenset({FORGEJO, GITHUB})
-SSH_SCHEME = "ssh://"
-SCHEME_SEP = "://"
-SCP_SEP = ":"
 
 
 @dataclass(frozen=True)
@@ -38,9 +36,20 @@ def diagnose(remote: str | None, home: Path) -> dict:
     checks = [_git(), _home(home), _config(home)]
     if remote is None:
         checks.append(Check("remote", True, "none given or found; remote checks skipped"))
+    elif (refused := _refused(remote)) is not None:
+        checks.append(refused)
     else:
         checks += [_remote(remote), _hive(remote, home), _ssh_mux(remote, home)]
     return {"ok": all(c.ok for c in checks), "checks": [asdict(c) for c in checks]}
+
+
+def _refused(remote: str) -> Check | None:
+    """허용 목록 밖의 URL 은 git 에 넘기지 않는다 — 나머지 원격 검사도 생략."""
+    try:
+        validate_remote_url(remote)
+    except InvalidState as e:
+        return Check("remote", False, e.detail)
+    return None
 
 
 def _git() -> Check:
@@ -112,17 +121,10 @@ def _hive(remote: str, home: Path) -> Check:
 
 
 def _ssh_mux(remote: str, home: Path) -> Check:
-    if not _is_ssh(remote):
+    if not is_ssh_url(remote):
         return Check("ssh_mux", True, "not an ssh remote")
 
     problem = Git(hive_path(remote, home) / REPO_DIR).mux_problem()
     if problem:
         return Check("ssh_mux", False, f"{problem}; use a shorter GITSWARM_HOME")
     return Check("ssh_mux", True, "connections are multiplexed")
-
-
-def _is_ssh(url: str) -> bool:
-    """ssh://… 또는 scp 꼴 user@host:path."""
-    if url.startswith(SSH_SCHEME):
-        return True
-    return SCHEME_SEP not in url and SCP_SEP in url.split("/", 1)[0]

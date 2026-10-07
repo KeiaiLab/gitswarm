@@ -39,3 +39,13 @@ def test_init_unreachable_remote_leaves_nothing(tmp_path: Path, home: Path):
 
 def test_resolve_home_env(home: Path):
     assert resolve_home() == home
+
+
+@pytest.mark.parametrize("url", ["--upload-pack=touch x;", "ext::sh -c x"])
+def test_hive_refuses_bad_urls(url: str, home: Path):
+    from gitswarm.errors import InvalidState
+
+    with pytest.raises(InvalidState):
+        Hive.init(url, home)
+    with pytest.raises(InvalidState):
+        Hive.open(url, home)

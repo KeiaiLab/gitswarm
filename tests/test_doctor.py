@@ -117,3 +117,11 @@ def test_mux_problem_names_quote(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("gitswarm.driver.git.SOCKET_PATH_MAX", 4096)
     assert "quote" in Git(tmp_path / 'q"x').mux_problem()
     assert Git(tmp_path / "ok").mux_problem() is None
+
+
+def test_diagnose_refuses_option_shaped_remote(tmp_path: Path, home: Path):
+    pwned = tmp_path / "pwned-diag"
+    report = diagnose(f"--upload-pack=touch {pwned};", home)
+    assert report["ok"] is False
+    assert "invalid remote url" in _check(report, "remote")["detail"]
+    assert not pwned.exists()

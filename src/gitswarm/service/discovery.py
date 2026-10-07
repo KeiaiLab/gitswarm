@@ -11,10 +11,13 @@ from pathlib import Path
 
 from gitswarm.driver.git import Git
 from gitswarm.store.hive import worktree_owner
+from gitswarm.urls import validate_remote_url
 
 ORIGIN = "origin"
 
 
 def discover_remote(cwd: Path, home: Path) -> str | None:
     # hive worktree 의 origin 도 같은 URL 이지만, hive.toml 이 정본이고 git 호출이 없다
-    return worktree_owner(cwd, home) or Git(cwd).remote_url(ORIGIN)
+    found = worktree_owner(cwd, home) or Git(cwd).remote_url(ORIGIN)
+    # 남의 레포 origin 은 외부 입력이다 — git 에 넘기기 전에 허용 목록(gitswarm.urls)을 지난다
+    return validate_remote_url(found) if found is not None else None

@@ -481,3 +481,18 @@ def test_default_branch_none_without_symref(repo: Git, tmp_path: Path):
 def test_default_branch_unreachable_is_remote_error(tmp_path: Path):
     with pytest.raises(RemoteError):
         Git(tmp_path).default_branch((tmp_path / "nope.git").as_uri())
+
+
+def test_option_shaped_url_is_never_an_option(tmp_path: Path):
+    """검증을 건너뛰어도 `--` 뒤의 값은 옵션이 아니다 — upload-pack 이 돌지 않는다."""
+    pwned = tmp_path / "pwned-driver"
+    poc = f"--upload-pack=touch {pwned};"
+    with pytest.raises(RemoteError):
+        Git(tmp_path).default_branch(poc)
+    bare = Git.init_bare(tmp_path / "h.git")
+    bare.set_origin(poc)
+    assert bare.origin_url() == poc
+    for op in (lambda: bare.ls_remote("HEAD"), lambda: bare.fetch("refs/heads/main")):
+        with pytest.raises(RemoteError):
+            op()
+    assert not pwned.exists()

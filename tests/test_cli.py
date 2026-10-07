@@ -353,3 +353,47 @@ def test_stats_via_cli(inited: str):
     assert out["by_kind"] == {"ws.created": 1, "ws.dropped": 1}
     assert out["by_state"] == {"dropped": 1} and out["open_oldest_age_s"] is None
     assert out["total_events"] == 2
+
+
+POC_DIR = "gs-poc"
+
+
+def test_option_shaped_remote_is_refused_without_running_it(tmp_path: Path, home: Path):
+    pwned = tmp_path / POC_DIR / "pwned-doctor"
+    pwned.parent.mkdir()
+    poc = f"--upload-pack=touch {pwned};"
+    for argv in (("doctor",), ("ws", "list"), ("ws", "create"), ("hive", "init", "--", poc)):
+        extra = () if argv[0] == "hive" else ("--remote", poc)
+        res = runner.invoke(app, [*argv, *extra], env={"GITSWARM_REMOTE": None})
+        out = json.loads(res.stdout.strip().splitlines()[-1])
+        assert res.exit_code == 4 and out["error"]["kind"] == "InvalidState", argv
+    assert not pwned.exists()
+
+
+def test_ext_transport_env_is_refused(tmp_path: Path, home: Path):
+    pwned = tmp_path / "pwned-ext"
+    code, out = run("ws", "list", remote=f"ext::sh -c touch% {pwned}")
+    assert code == 4 and out["error"]["kind"] == "InvalidState"
+    assert not pwned.exists()
+
+
+def test_discovered_option_shaped_origin_fails_closed(tmp_path: Path, home: Path, monkeypatch):
+    from gitswarm.driver.git import Git
+
+    repo = tmp_path / "evil"
+    git("init", "-q", str(repo), cwd=tmp_path)
+    git("remote", "add", "--", "origin", "--upload-pack=x", cwd=repo)
+    monkeypatch.chdir(repo)
+
+    seen: list[tuple[str, ...]] = []
+    real = Git._run
+
+    def record(self, *args, **kw):
+        seen.append(args)
+        return real(self, *args, **kw)
+
+    monkeypatch.setattr(Git, "_run", record)
+    for argv in (("ws", "list"), ("doctor",)):
+        code, out = run_here(*argv)
+        assert code == 4 and out["error"]["kind"] == "InvalidState", argv
+    assert not any(a.startswith("--upload-pack") for args in seen for a in args)

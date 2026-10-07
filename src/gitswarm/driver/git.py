@@ -182,7 +182,7 @@ class Git:
         return cls(path)
 
     def set_origin(self, url: str) -> None:
-        self._run("remote", "add", "origin", url)
+        self._run("remote", "add", "--", "origin", url)
 
     def origin_url(self) -> str:
         return self._out("remote", "get-url", "origin")
@@ -198,6 +198,7 @@ class Git:
         p = self._run(
             "ls-remote",
             "--exit-code",
+            "--",
             "origin",
             ref,
             ok_rc=(0, RC_LS_REMOTE_MISSING),
@@ -208,7 +209,7 @@ class Git:
 
     def default_branch(self, remote: str = "origin") -> str | None:
         """원격 HEAD 가 가리키는 브랜치 이름. 빈 레포·끊긴 HEAD 처럼 symref 가 없으면 None."""
-        out = self._out("ls-remote", "--symref", remote, REMOTE_HEAD)
+        out = self._out("ls-remote", "--symref", "--", remote, REMOTE_HEAD)
         for line in out.splitlines():
             target, _, name = line.partition("\t")
             if name == REMOTE_HEAD and target.startswith(SYMREF_PREFIX):
@@ -243,7 +244,7 @@ class Git:
 
         사전 ls-remote 없이 fetch 한 번 — 없음은 fetch 의 오류 문구로 판정한다.
         """
-        p = self._run("fetch", "-q", source, f"+{ref}:{local}", ok_rc=(0, RC_FATAL))
+        p = self._run("fetch", "-q", "--", source, f"+{ref}:{local}", ok_rc=(0, RC_FATAL))
         if p.returncode == 0:
             return self.rev_parse(local)
 
@@ -258,7 +259,7 @@ class Git:
         expect_val = NULL_OID if expected is None else expected
         lease = f"--force-with-lease={ref}:{expect_val}"
         # -q 없이 — 판정에 UP_TO_DATE_MARKER 가 필요하다
-        p = self._run("push", "origin", lease, f"{oid}:{ref}", ok_rc=(0, 1))
+        p = self._run("push", lease, "--", "origin", f"{oid}:{ref}", ok_rc=(0, 1))
         err = p.stderr.decode(errors="replace")
 
         # 원격이 이미 oid 면 git 은 lease 를 건너뛴다 — 기대값이 그 oid 였을 때만 성공이다
@@ -275,10 +276,11 @@ class Git:
         expected = 마지막으로 본 oid → lease 삭제, 원격이 옮겨졌으면 지우지 않고 False.
         expected=None = 본 적 없음 → 무조건 삭제.
         """
-        args = ["push", "-q", "origin"]
+        args = ["push", "-q"]
         if expected is not None:
             args.append(f"--force-with-lease={ref}:{expected}")
-        p = self._run(*args, f":{ref}", ok_rc=(0, 1))
+        # `--` 뒤는 위치 인자뿐 — 값이 옵션으로 읽히지 않는다
+        p = self._run(*args, "--", "origin", f":{ref}", ok_rc=(0, 1))
         if p.returncode == 0:
             self._run("update-ref", "-d", tracking_ref(ref))
             return True

@@ -59,3 +59,13 @@ def test_remote_url_by_name(remote_url: str, tmp_path: Path, name: str):
     git("clone", "-q", "-o", name, remote_url, str(clone), cwd=tmp_path)
     assert Git(clone).remote_url(name) == remote_url
     assert Git(clone).remote_url("nope") is None
+
+
+def test_discovered_option_shaped_origin_is_invalid(tmp_path: Path, home: Path):
+    from gitswarm.errors import InvalidState
+
+    repo = tmp_path / "evil"
+    git("init", "-q", str(repo), cwd=tmp_path)
+    git("remote", "add", "--", "origin", "--upload-pack=x", cwd=repo)
+    with pytest.raises(InvalidState):
+        discover_remote(repo, home)

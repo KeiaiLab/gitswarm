@@ -9,6 +9,7 @@ from gitswarm.service.discovery import discover_remote
 from gitswarm.service.doctor import diagnose
 from gitswarm.service.workspace import WorkspaceService, WsState, open_service
 from gitswarm.store.hive import resolve_home
+from gitswarm.urls import validate_remote_url
 
 USAGE_KIND = "Usage"
 NO_REMOTE = (
@@ -50,8 +51,10 @@ def parse_state(state: str | None) -> WsState | None:
 
 
 def find_remote(remote: str | None) -> str | None:
-    """주어진 원격, 없으면 cwd 로 찾은 원격."""
-    return remote or discover_remote(Path.cwd(), resolve_home())
+    """주어진 원격, 없으면 cwd 로 찾은 원격. 허용 목록 밖이면 InvalidState(사용법 오류가 아니라 거절)."""
+    if remote:
+        return validate_remote_url(remote)
+    return discover_remote(Path.cwd(), resolve_home())
 
 
 def resolve_remote(remote: str | None) -> str:

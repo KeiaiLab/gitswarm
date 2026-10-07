@@ -230,3 +230,13 @@ def test_stats_via_mcp(remote_url: str, home: Path):
     assert out["by_state"] == {"open": 1} and out["total_events"] == 1
     assert isinstance(out["open_oldest_age_s"], int)
     assert r["ok"] is True
+
+
+def test_mcp_refuses_option_shaped_remote(tmp_path: Path, home: Path):
+    pwned = tmp_path / "pwned-mcp"
+    poc = f"--upload-pack=touch {pwned};"
+    for name in ("doctor", "workspace_list", "stats"):
+        out = call(name, remote=poc)
+        assert out["ok"] is False and out["error"]["kind"] == "InvalidState", name
+    assert call("hive_init", url=poc)["error"]["kind"] == "InvalidState"
+    assert not pwned.exists()
