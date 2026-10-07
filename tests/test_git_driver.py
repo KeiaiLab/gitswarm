@@ -188,6 +188,14 @@ def test_push_lease_stale_after_remote_moved_returns_false(tmp_path: Path):
             "error: failed to push some refs to '../remote.git'",
             True,
         ),
+        # Ref lock contention with a sibling writer
+        (
+            "remote: error: cannot lock ref 'refs/heads/gitswarm/meta': unable to create "
+            "directory for '/tmp/r/remote.git/refs/heads/gitswarm/meta.lock'\n"
+            " ! [remote rejected] 1a2b3c4d -> gitswarm/meta (failed to update ref)\n"
+            "error: failed to push some refs to '../remote.git'",
+            True,
+        ),
         # Pre-receive hook decline (NOT a lease rejection)
         (
             "remote: error: hook declined\n"

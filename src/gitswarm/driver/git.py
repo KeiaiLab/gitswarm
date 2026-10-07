@@ -12,12 +12,14 @@ from gitswarm.errors import RemoteError
 
 RC_LS_REMOTE_MISSING = 2
 # Four wordings measured on git 2.55: sequential stale lease; server-side race on update; server-side race on create.
+# Any "cannot lock ref" server message is lock contention with a sibling writer; the CAS loop re-fetches and retries.
 # Hook declines ("pre-receive hook declined") must NOT match.
 REJECTED_MARKERS = (
     "[rejected]",
     "stale info",
     "incorrect old value provided",
     "reference already exists",
+    "cannot lock ref",
 )
 MISSING_REMOTE_REF_MARKERS = ("couldn't find remote ref", "remote ref does not exist")
 
