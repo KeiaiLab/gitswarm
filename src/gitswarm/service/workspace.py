@@ -668,11 +668,15 @@ class WorkspaceService:
             if not _expired(ws, now):
                 continue
 
-            # 옮겨진 브랜치 하나가 나머지 회수를 막지 않는다
+            # 레코드 하나의 실패가 나머지 회수를 막지 않는다 — 옮겨진 브랜치는 conflicted,
+            # 그 사이 사라지거나 망가진 레코드는 invalid
             try:
                 self._drop_as(ws, EV_EXPIRED, LeaseMode.STRICT)
             except Conflict:
                 conflicted.append(ws.id)
+                continue
+            except (NotFound, InvalidState) as e:
+                invalid.append({"id": ws.id, "detail": e.detail})
                 continue
             expired.append(ws.id)
         return {"expired": expired, "invalid": invalid, "conflicted": conflicted}

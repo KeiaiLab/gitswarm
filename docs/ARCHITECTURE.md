@@ -297,7 +297,8 @@ branch; the next `gc` records it as `ws.expired`.
 never expires). Result: `{expired, invalid, conflicted}`.
 
 - `expired`: ids dropped, recorded as `ws.expired`.
-- `invalid`: malformed records, skipped.
+- `invalid`: malformed records, or records whose transition failed
+  (`NotFound`, `InvalidState`) mid-gc, skipped with the detail.
 - `conflicted`: branch moved after this host last saw it, skipped.
 
 Rule: gc never deletes a commit this host has not seen. Both skipped

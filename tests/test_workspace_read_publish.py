@@ -146,6 +146,41 @@ def test_gc_drops_expired_only(remote_url: str, home: Path):
     assert svc.gc() == {"expired": [], "invalid": [], "conflicted": []}
 
 
+@pytest.mark.parametrize("error", [NotFound, InvalidState])
+def test_gc_isolates_a_failing_record(
+    remote_url: str, home: Path, monkeypatch: pytest.MonkeyPatch, error: type
+):
+    hive = Hive.init(remote_url, home)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    svc = WorkspaceService(hive, MetaStore(hive.git), PlainAdapter(), clock=lambda: now)
+    first = svc.create("main", {}, 60, None, Checkout.NONE, {})
+    second = svc.create("main", {}, 60, None, Checkout.NONE, {})
+    svc.clock = lambda: now + timedelta(seconds=61)
+
+    # 처음 처리하는 레코드의 전이만 진다(남이 그 사이 지우거나 망가뜨렸다) — 다른 하나는 거둔다
+    real = svc._transition
+    failed: list[str] = []
+
+    def transition(ws_id, kind, mutate):
+        if not failed:
+            failed.append(ws_id)
+            raise error("record changed mid-gc")
+        return real(ws_id, kind, mutate)
+
+    monkeypatch.setattr(svc, "_transition", transition)
+    out = svc.gc()
+
+    # 같은 ms 의 ULID 는 순서가 무작위다 — 처리 순서로 둘을 가른다
+    (lost,) = failed
+    (kept,) = {first.id, second.id} - {lost}
+    assert out == {
+        "expired": [kept],
+        "invalid": [{"id": lost, "detail": "record changed mid-gc"}],
+        "conflicted": [],
+    }
+    assert svc.get(kept).state is WsState.DROPPED
+
+
 def test_read_does_not_move_publish_baseline(svc: WorkspaceService, tmp_path: Path):
     r = svc.create("main", {}, 0, None, Checkout.WORKTREE, {})
     other = tmp_path / "other"
