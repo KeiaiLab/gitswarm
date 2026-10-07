@@ -132,6 +132,9 @@ raise Conflict
   브랜치·로컬 ref·토큰을 거두고 원래 예외를 올린다. 레코드 없는 고아 브랜치는 남지 않는다.
 - **삭제도 lease 로.** `drop`·`gc` 의 원격 브랜치 삭제는 마지막으로 본 oid 를 기대값으로 건다
   (`--force-with-lease=<ref>:<seen> :<ref>`). 본 적 없는 커밋은 지우지 않는다(`Conflict`).
+- 원격 왕복: 사전검사(ls-remote) 없이 git 의 결과를 해석한다(fetch 의 "couldn't find remote
+  ref" = 없음, push 의 "Everything up-to-date" = 기대값이 그 oid 일 때만 성공); SSH 는 hive 별
+  ControlMaster 로 다중화한다.
 - 잠금 파일·데몬 없음. 같은 호스트 형제 프로세스가 로컬 tracking ref 디렉터리를 두고 다투는
   `cannot lock ref` 는 fetch 쪽에서 유한 재시도한다.
 

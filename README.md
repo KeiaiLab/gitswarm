@@ -102,6 +102,12 @@ uv run pytest -q --cov
 죽은 코드 0 · 커버리지 100%(`fail_under = 100`)가 CI 게이트다. vulture 허용 이름은 typer·fastmcp
 데코레이터가 등록하는 진입점과 console script `main` 뿐이다.
 
+## 성능 / Performance
+
+명령 하나는 원격 왕복 1~4회, SSH 핸드셰이크는 hive 별 다중화로 60 초 안에 1회다. Forgejo(SSH,
+RTT 0.2 s) 실측 중앙값 — create 1.6 s · publish 1.7 s · drop 1.7 s · get 0.3 s · read 0.5 s
+(`uv run scripts/bench.py <remote-url> --base stable`, 예산 초과 시 rc 1).
+
 ## 로드맵
 
 A Workspace(이 판) → B Intent(커밋 ↔ 지시·근거 기록) → C Landing(동시 결과 기계 병합).
