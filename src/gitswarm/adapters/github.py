@@ -28,9 +28,14 @@ TIMEOUT_S = 10
 JWT_BACKDATE_S = 60  # 시계 오차 흡수
 JWT_EXP_S = 540  # GitHub 상한 600 에서 시계 오차 여유
 USER_SEP = "/"
-MAX_ID_DIGITS = 20
+MAX_ID_DIGITS = 11  # epoch 초 up to year 5138
 HEADERS = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
 USER_SHAPE = "user must be '<app_id>/<installation_id>'"
+
+
+def _valid_id(text: str) -> bool:
+    # int() 전에 길이를 자른다: 긴 숫자열은 int 가 ValueError 를 던진다.
+    return len(text) <= MAX_ID_DIGITS and text.isascii() and text.isdigit() and int(text) > 0
 
 
 @dataclass(frozen=True)
@@ -45,7 +50,7 @@ class GitHubAdapter:
     def from_spec(cls, spec: RemoteSpec) -> GitHubAdapter:
         # RemoteSpec.user 를 "<app_id>/<installation_id>" 로 재사용한다.
         ids = spec.user.split(USER_SEP)
-        if len(ids) != 2 or not all(i.isascii() and i.isdigit() and int(i) > 0 for i in ids):
+        if len(ids) != 2 or not all(_valid_id(i) for i in ids):
             raise Unsupported(f"github {USER_SHAPE}")
 
         path = Path(spec.credential_file).expanduser()
@@ -116,5 +121,6 @@ class GitHubAdapter:
         """
         if len(token_id) > MAX_ID_DIGITS or not TOKEN_ID_RE.fullmatch(token_id):
             raise InvalidState(f"invalid token id {token_id!r}")
+        # 11자리 상한이면 fromtimestamp 는 항상 성립한다(최대 연 5138).
         at = datetime.fromtimestamp(int(token_id), UTC).isoformat()
         print(f"gitswarm: github token expires at {at}; cannot revoke by id", file=sys.stderr)

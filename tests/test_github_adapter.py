@@ -160,9 +160,10 @@ def test_token_repr_hides_secret():
     assert "ghs_x" not in repr(Token(id="1", secret="ghs_x", scope=Scope.READ))
 
 
-def test_revoke_rejects_huge_id(adapter: GitHubAdapter):
+@pytest.mark.parametrize("digits", [12, 20, 25])
+def test_revoke_rejects_huge_id(adapter: GitHubAdapter, digits: int):
     with pytest.raises(InvalidState):
-        adapter.revoke_token("9" * 25)
+        adapter.revoke_token("9" * digits)
 
 
 def test_from_spec_rejects_non_rsa_pem(tmp_path: Path, key: rsa.RSAPrivateKey):
@@ -221,7 +222,7 @@ def test_from_spec(tmp_path: Path, pem: str):
     assert b.api == "https://ghe.example.com/api/v3"
 
 
-@pytest.mark.parametrize("user", ["12", "a/b", "1/2/3", "", "0/5", "5/0", "١/٢"])
+@pytest.mark.parametrize("user", ["12", "a/b", "1/2/3", "", "0/5", "5/0", "1" * 5000 + "/1", "١/٢"])
 def test_from_spec_bad_user(tmp_path: Path, pem: str, user: str):
     with pytest.raises(Unsupported, match="app_id"):
         GitHubAdapter.from_spec(spec(tmp_path, pem, user=user))
