@@ -465,13 +465,16 @@ class WorkspaceService:
         return self._transition(ws.id, kind, lambda cur: cur.with_state(WsState.DROPPED))
 
     def _delete_branch(self, branch: str, mode: LeaseMode) -> bool:
-        """원격 브랜치 삭제. 본 oid 로 lease, FOLLOW 면 거절 시 지금 tip 으로 한 번 더(여전히 lease).
+        """원격 브랜치 삭제. 본 oid 로 lease, FOLLOW 면 거절(또는 본 적 없음) 시 지금 tip 으로 한 번(lease).
 
         명시적 drop 은 "그 workspace 를 버린다"는 의도라 남의 push 도 따라가 지운다.
         lease 는 본 것과 지우는 것 사이(TOCTOU)만 막는다 — 그 사이 또 옮겨지면 False.
         """
         git = self.hive.git
-        if git.delete_remote(branch, self._seen(branch)):
+        seen = self._seen(branch)
+
+        # 본 적 없으면 기준 lease 가 없다 — None 을 넘기면 무조건 삭제가 되므로 넘기지 않는다
+        if seen is not None and git.delete_remote(branch, seen):
             return True
         if mode is LeaseMode.STRICT:
             return False

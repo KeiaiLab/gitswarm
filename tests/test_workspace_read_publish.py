@@ -296,3 +296,31 @@ def test_gc_reports_moved_branch_as_conflicted(remote_url: str, home: Path, tmp_
     assert svc.gc() == {"expired": [], "invalid": [], "conflicted": [r.id]}
     assert svc.hive.git.ls_remote(r.branch) == theirs
     assert svc.get(r.id).state is WsState.OPEN
+
+
+def _unseen_by_b(remote_url: str, home: Path, tmp_path: Path):
+    """A 가 만들고 제3의 clone 이 push 한 workspace 를, 한 번도 fetch 안 한 호스트 B 가 다룬다."""
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    hive_a = Hive.init(remote_url, home)
+    svc_a = WorkspaceService(hive_a, MetaStore(hive_a.git), PlainAdapter(), clock=lambda: now)
+    r = svc_a.create("main", {}, 60, None, Checkout.NONE, {})
+    theirs = _foreign_push(svc_a, r.branch, tmp_path)
+
+    hive_b = Hive.init(remote_url, tmp_path / "host-b")
+    later = now + timedelta(seconds=61)
+    svc_b = WorkspaceService(hive_b, MetaStore(hive_b.git), PlainAdapter(), clock=lambda: later)
+    return svc_b, r, theirs
+
+
+def test_gc_on_fresh_host_never_deletes_unseen_branch(remote_url: str, home: Path, tmp_path: Path):
+    svc_b, r, theirs = _unseen_by_b(remote_url, home, tmp_path)
+    assert svc_b.gc() == {"expired": [], "invalid": [], "conflicted": [r.id]}
+    assert svc_b.hive.git.ls_remote(r.branch) == theirs
+    assert svc_b.get(r.id).state is WsState.OPEN
+
+
+def test_drop_on_fresh_host_follows_peeked_tip(remote_url: str, home: Path, tmp_path: Path):
+    svc_b, r, _ = _unseen_by_b(remote_url, home, tmp_path)
+    assert svc_b.drop(r.id).state is WsState.DROPPED
+    assert svc_b.hive.git.ls_remote(r.branch) is None
+    assert svc_b.get(r.id).state is WsState.DROPPED

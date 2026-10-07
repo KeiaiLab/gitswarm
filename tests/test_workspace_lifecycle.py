@@ -281,12 +281,9 @@ def test_publish_drop_race_stays_consistent(remote_url: str, tmp_path: Path, b_s
     state = svc_b.get(r.id).state
     branch = hive_b.git.ls_remote(r.branch)
     kinds = _subjects(svc_b, r.id)
-    if state is WsState.PUBLISHED:
-        assert branch is not None and isinstance(racer.other_error, Conflict)
-    else:
-        assert state is WsState.DROPPED and branch is None and a_error is not None
     # 명시적 drop 은 A 의 push 를 따라가 지운다(본 적 있든 없든) — A 의 published 전이가 거절된다
-    assert state is WsState.DROPPED and isinstance(a_error, InvalidState)
+    assert state is WsState.DROPPED and branch is None and isinstance(a_error, InvalidState)
+    assert racer.other_error is None
     # §3: dropped 다음에 published 가 오는 이력은 없다
     if "ws.dropped" in kinds:
         assert "ws.published" not in kinds[kinds.index("ws.dropped") :]
