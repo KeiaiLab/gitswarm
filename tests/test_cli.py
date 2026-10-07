@@ -1,10 +1,13 @@
+import base64
 import json
+import sys
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from gitswarm.surfaces.cli import app
+from gitswarm.surfaces.cli import app, main
+from tests.conftest import git
 
 runner = CliRunner()
 
@@ -75,9 +78,53 @@ def test_missing_hive_is_not_found(remote_url: str, home: Path):
     assert code == 2 and out["error"]["kind"] == "NotFound"
 
 
+BINARY = bytes([0xFF, 0xFE, 0x00, 0x80])
+
+
 def test_read_binary_is_base64(inited: str):
-    _, out = run("ws", "create", "--base", "main", remote=inited)
-    ws_id = out["id"]
-    # README 는 텍스트라 content 로 온다; 이진이면 content_b64. 여기서는 키 계약만 고정
-    _, out = run("ws", "read", ws_id, "README.md", remote=inited)
-    assert "content" in out and "content_b64" not in out
+    _, out = run("ws", "create", "--base", "main", "--checkout", remote=inited)
+    ws_id, wt = out["id"], Path(out["path"])
+    (wt / "blob.bin").write_bytes(BINARY)
+    git("add", "blob.bin", cwd=wt)
+    git("commit", "-m", "Add blob", cwd=wt)
+    code, _ = run("ws", "publish", ws_id, remote=inited)
+    assert code == 0
+
+    code, out = run("ws", "read", ws_id, "blob.bin", remote=inited)
+    assert code == 0 and "content" not in out
+    assert base64.b64decode(out["content_b64"]) == BINARY
+
+
+def main_cli(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], *argv: str
+) -> tuple[int, str]:
+    monkeypatch.setattr(sys, "argv", ["gitswarm", *argv])
+    monkeypatch.delenv("GITSWARM_REMOTE", raising=False)
+    code = 0
+    try:
+        main()
+    except SystemExit as exc:
+        code = int(exc.code or 0)
+    return code, capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("ws", "list"),
+        ("ws", "list", "--remote", "x", "--state", "bogus"),
+        ("ws", "create", "--remote", "x", "--label", "foo"),
+        ("ws", "list", "--nope"),
+    ],
+)
+def test_usage_errors_are_one_json_line(monkeypatch, capsys, argv):
+    code, stdout = main_cli(monkeypatch, capsys, *argv)
+    lines = stdout.strip().splitlines()
+    assert code == 1 and len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["ok"] is False and payload["error"]["kind"] == "Usage"
+
+
+def test_help_exits_zero(monkeypatch, capsys):
+    code, _ = main_cli(monkeypatch, capsys, "--help")
+    assert code == 0

@@ -15,8 +15,15 @@ from gitswarm.errors import EXIT_CODES, GitswarmError
 from gitswarm.service.workspace import Checkout, WsState, open_service
 from gitswarm.store.hive import Hive, resolve_home
 
+# typer>=0.27 vendors click as typer._click; older typer uses the real click.
+try:
+    from typer._click import exceptions as click_exc
+except ImportError:  # pragma: no cover
+    from click import exceptions as click_exc
+
 REMOTE_ENV = "GITSWARM_REMOTE"
 EXIT_USAGE = 1
+USAGE_KIND = "Usage"
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 hive_app = typer.Typer(no_args_is_help=True)
@@ -35,12 +42,24 @@ def _emit(payload: dict) -> None:
     typer.echo(json.dumps({"ok": True, **payload}, ensure_ascii=False))
 
 
+def _usage_payload(detail: str) -> dict:
+    return {"ok": False, "error": {"kind": USAGE_KIND, "detail": detail}}
+
+
 def _remote(remote: str | None) -> str:
     if remote:
         return remote
-    detail = f"--remote or ${REMOTE_ENV} required"
-    typer.echo(json.dumps({"ok": False, "error": {"kind": "Usage", "detail": detail}}))
-    raise typer.Exit(EXIT_USAGE)
+    raise click_exc.UsageError(f"--remote or ${REMOTE_ENV} required")
+
+
+def _parse_labels(items: list[str]) -> dict:
+    labels = {}
+    for item in items:
+        key, sep, value = item.partition("=")
+        if not sep:
+            raise click_exc.UsageError(f"--label expects k=v, got {item!r}")
+        labels[key] = value
+    return labels
 
 
 def guarded(fn):
@@ -83,7 +102,7 @@ def ws_create(
     label: Annotated[list[str] | None, typer.Option("--label", help="k=v")] = None,
 ) -> None:
     agent_info = {k: v for k, v in (("name", agent), ("run", run)) if v}
-    labels = dict(kv.split("=", 1) for kv in (label or []))
+    labels = _parse_labels(label or [])
     mode = Checkout.WORKTREE if checkout else Checkout.NONE
     r = _svc(remote).create(base, agent_info, ttl, from_ws, mode, labels)
     _emit(r.to_dict())
@@ -99,10 +118,9 @@ def ws_get(ws_id: str, remote: RemoteOpt = None) -> None:
 @guarded
 def ws_list(
     remote: RemoteOpt = None,
-    state: Annotated[str | None, typer.Option("--state")] = None,
+    state: Annotated[WsState | None, typer.Option("--state")] = None,
 ) -> None:
-    flt = WsState(state) if state else None
-    _emit({"workspaces": [w.to_dict() for w in _svc(remote).list(flt)]})
+    _emit({"workspaces": [w.to_dict() for w in _svc(remote).list(state)]})
 
 
 @ws_app.command("read")
@@ -149,7 +167,16 @@ def mcp_serve() -> None:
 
 
 def main() -> None:
-    app()
+    try:
+        app(standalone_mode=False)
+    except click_exc.UsageError as e:
+        typer.echo(json.dumps(_usage_payload(e.format_message()), ensure_ascii=False))
+        sys.exit(EXIT_USAGE)
+    except click_exc.Exit as e:
+        sys.exit(e.exit_code)
+    except click_exc.Abort:
+        typer.echo(json.dumps(_usage_payload("aborted")))
+        sys.exit(EXIT_USAGE)
 
 
 if __name__ == "__main__":
