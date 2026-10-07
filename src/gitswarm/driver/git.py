@@ -174,11 +174,16 @@ class Git:
     @classmethod
     def init_bare(cls, path: Path) -> Git:
         path.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
-            ["git", "init", "--bare", "-q", str(path)],
-            check=True,
-            capture_output=True,
-        )
+        try:
+            subprocess.run(
+                ["git", "init", "--bare", "-q", "--", str(path)],
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as e:
+            # JSON 계약 — 날 traceback 대신 오류 종류로
+            detail = e.stderr.decode(errors="replace").strip() if e.stderr else ""
+            raise RemoteError(detail or f"git init rc={e.returncode}") from None
         return cls(path)
 
     def set_origin(self, url: str) -> None:

@@ -73,3 +73,72 @@ def test_corrupt_hive_toml_is_invalid_state(remote_url: str, home: Path, text: s
     (hive.path / "hive.toml").write_text(text)
     with pytest.raises(InvalidState, match=r"hive\.toml is corrupt"):
         Hive.open(remote_url, home)
+
+
+# ── 동시·재개 가능한 init ─────────────────────────────────────
+FIRST_LISTERS = 6
+
+
+def _first_list(remote_url: str, home: str) -> None:
+    from gitswarm.service.workspace import open_service
+
+    open_service(remote_url, Path(home)).list(None)
+
+
+def test_concurrent_first_use_builds_one_hive(remote_url: str, home: Path):
+    import multiprocessing as mp
+
+    ctx = mp.get_context("spawn")
+    procs = [
+        ctx.Process(target=_first_list, args=(remote_url, str(home))) for _ in range(FIRST_LISTERS)
+    ]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(120)
+    assert [p.exitcode for p in procs] == [0] * FIRST_LISTERS
+    assert [d.name for d in (home / "hives").iterdir()] == [hive_id(remote_url)]
+
+
+def test_interrupted_init_is_rebuilt(remote_url: str, home: Path):
+    from gitswarm.driver.git import Git
+    from gitswarm.store.hive import hive_path
+
+    leftover = hive_path(remote_url, home)
+    Git.init_bare(leftover / "repo.git")  # hive.toml 없이 끊긴 옛 init
+    hive = Hive.init(remote_url, home)
+    assert (hive.path / "hive.toml").exists() and hive.git.origin_url() == remote_url
+
+
+def test_lost_race_uses_the_winner(remote_url: str, home: Path, monkeypatch):
+    """rename 직전에 다른 프로세스가 끝냈다 — 내 임시 자리를 버리고 그쪽을 연다."""
+    import gitswarm.store.hive as hive_mod
+
+    winner = Hive.init(remote_url, home)
+    real_exists = Path.exists
+    calls = {"n": 0}
+
+    # 첫 존재 확인만 "아직 없다"로 속여 init 이 임시 자리를 짓게 한다
+    def exists(self):
+        if self.name == "hive.toml" and calls["n"] == 0:
+            calls["n"] += 1
+            return False
+        return real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", exists)
+    again = hive_mod.Hive.init(remote_url, home)
+    assert again.path == winner.path
+    assert [d.name for d in (home / "hives").iterdir()] == [hive_id(remote_url)]
+
+
+def test_init_bare_failure_is_remote_error(tmp_path: Path, monkeypatch):
+    import subprocess
+
+    from gitswarm.driver.git import Git
+
+    def fail(cmd, **kw):
+        raise subprocess.CalledProcessError(128, cmd, b"", b"fatal: cannot mkdir")
+
+    monkeypatch.setattr("gitswarm.driver.git.subprocess.run", fail)
+    with pytest.raises(RemoteError, match="cannot mkdir"):
+        Git.init_bare(tmp_path / "repo.git")
