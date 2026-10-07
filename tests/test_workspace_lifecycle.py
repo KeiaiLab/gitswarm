@@ -88,16 +88,34 @@ def _creator(remote_url: str, home: str) -> None:
     open_service(remote_url, Path(home)).create("main", {}, 0, None, Checkout.NONE, {})
 
 
-def test_concurrent_create_all_recorded(remote_url: str, home: Path):
-    Hive.init(remote_url, home)
+def _run_creators(remote_url: str, home: Path, n: int) -> list[int | None]:
     ctx = mp.get_context("spawn")
-    procs = [ctx.Process(target=_creator, args=(remote_url, str(home))) for _ in range(3)]
+    procs = [ctx.Process(target=_creator, args=(remote_url, str(home))) for _ in range(n)]
     for p in procs:
         p.start()
     for p in procs:
-        p.join(60)
-        assert p.exitcode == 0
+        p.join(120)
+    return [p.exitcode for p in procs]
+
+
+def test_concurrent_create_all_recorded(remote_url: str, home: Path):
+    Hive.init(remote_url, home)
+    assert _run_creators(remote_url, home, 3) == [0, 0, 0]
     assert len(open_service(remote_url, home).list(WsState.OPEN)) == 3
+
+
+LOCKSTEP_CREATORS = 8
+
+
+def test_concurrent_create_records_match_branches(remote_url: str, home: Path):
+    """N 동시 생성 — 전부 성공하고, 원격 ws 브랜치 수 = meta 레코드 수(고아 0)."""
+    hive = Hive.init(remote_url, home)
+    codes = _run_creators(remote_url, home, LOCKSTEP_CREATORS)
+    assert codes == [0] * LOCKSTEP_CREATORS
+    branches = hive.git.ls_remote_prefix(ws_ref(""))
+    records = open_service(remote_url, home).list(WsState.OPEN)
+    assert len(records) == len(branches) == LOCKSTEP_CREATORS
+    assert {w.branch for w in records} == set(branches)
 
 
 def test_invalid_transition(svc: WorkspaceService):
@@ -268,3 +286,27 @@ def test_publish_drop_race_stays_consistent(remote_url: str, tmp_path: Path, b_s
     # §3: dropped 다음에 published 가 오는 이력은 없다
     if "ws.dropped" in kinds:
         assert "ws.published" not in kinds[kinds.index("ws.dropped") :]
+
+
+def test_meta_exhaustion_compensates_branch_and_token(
+    remote_url: str, home: Path, monkeypatch: pytest.MonkeyPatch
+):
+    hive = Hive.init(remote_url, home)
+    adapter = TokenAdapter()
+    svc = WorkspaceService(hive, MetaStore(hive.git, sleep=lambda s: None), adapter)
+    real_push = type(hive.git).push
+
+    def push(self, oid: str, ref: str, expected: str | None) -> bool:
+        if ref == META_REF:
+            return False
+        return real_push(self, oid, ref, expected)
+
+    monkeypatch.setattr(type(hive.git), "push", push)
+    with pytest.raises(Conflict):
+        svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
+
+    # 기록 없는 브랜치·토큰을 남기지 않는다
+    assert hive.git.ls_remote_prefix(ws_ref("")) == {}
+    assert len(adapter.issued) == 1 and adapter.revoked == ["42"]
+    ws_id = adapter.issued[0][1]
+    assert hive.git.exists(ws_ref(ws_id)) is False

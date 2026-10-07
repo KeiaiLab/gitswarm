@@ -215,23 +215,29 @@ class WorkspaceService:
         # 원격 브랜치가 먼저다 — 실패하면 meta 에 아무것도 남지 않는다
         if not self.hive.git.push(base_oid, branch, expected=None):
             raise InvalidState(f"branch {branch} already exists on remote")
-        self.hive.git.update_ref(branch, base_oid)
 
-        token = self._issue_token(ws_id)
-        ws = Workspace(
-            id=ws_id,
-            state=WsState.OPEN,
-            base_ref=_full_ref(base_ref) if not parent else parent.branch,
-            base_oid=base_oid,
-            branch=branch,
-            agent=agent,
-            parent=parent.id if parent else None,
-            created_at=_iso(self.clock()),
-            ttl_s=ttl_s,
-            labels=labels,
-            token_id=token[0] if token else None,
-        )
-        self._record(ws_id, EV_CREATED, lambda prev: _new_only(prev, ws))
+        # 이 뒤가 실패하면 기록 없는 브랜치·토큰이 남는다(gc 가 못 본다) — 되돌리고 원래 오류를 올린다
+        token: tuple[str, str] | None = None
+        try:
+            self.hive.git.update_ref(branch, base_oid)
+            token = self._issue_token(ws_id)
+            ws = Workspace(
+                id=ws_id,
+                state=WsState.OPEN,
+                base_ref=_full_ref(base_ref) if not parent else parent.branch,
+                base_oid=base_oid,
+                branch=branch,
+                agent=agent,
+                parent=parent.id if parent else None,
+                created_at=_iso(self.clock()),
+                ttl_s=ttl_s,
+                labels=labels,
+                token_id=token[0] if token else None,
+            )
+            self._record(ws_id, EV_CREATED, lambda prev: _new_only(prev, ws))
+        except Exception:
+            self._undo_create(branch, token)
+            raise
 
         path = None
         if checkout is Checkout.WORKTREE:
@@ -239,6 +245,24 @@ class WorkspaceService:
             self.hive.git.worktree_add(wt, ws_branch(ws_id))
             path = str(wt)
         return CreateResult(ws_id, branch, base_oid, path, token[1] if token else None)
+
+    def _undo_create(self, branch: str, token: tuple[str, str] | None) -> None:
+        """create 보상. 각 단계는 실패해도 다음 단계로 간다 — 원래 오류를 가리지 않는다."""
+        steps: list[tuple[str, Callable[[], object]]] = [
+            ("delete remote branch", lambda: self.hive.git.delete_remote(branch, None)),
+            ("delete local ref", lambda: self.hive.git.delete_ref(branch)),
+        ]
+        if token:
+            steps.append(("revoke token", lambda: self.adapter.revoke_token(token[0])))
+
+        for what, step in steps:
+            try:
+                step()
+            except Exception as e:
+                print(
+                    f"gitswarm: create cleanup failed to {what}: {type(e).__name__}",
+                    file=sys.stderr,
+                )
 
     def _issue_token(self, ws_id: str) -> tuple[str, str] | None:
         if Capability.TOKEN not in self.adapter.capabilities():

@@ -135,6 +135,16 @@ class Git:
             time.sleep(backoff_s(attempt))
         return op()
 
+    def ls_remote_prefix(self, prefix: str) -> dict[str, str]:
+        """원격에서 prefix 로 시작하는 ref → oid. 예: "refs/heads/gitswarm/ws/"."""
+        out = self._out("ls-remote", "origin", f"{prefix}*")
+        refs: dict[str, str] = {}
+        for line in filter(None, out.split("\n")):
+            oid, ref = line.split("\t", 1)
+            if ref.startswith(prefix):
+                refs[ref] = oid
+        return refs
+
     def fetch(self, ref: str) -> str | None:
         """origin/<ref> 를 tracking ref 로 강제 갱신. 원격에 없으면 tracking 도 지우고 None."""
         return self._lock_retry(lambda: self._fetch_once(ref))

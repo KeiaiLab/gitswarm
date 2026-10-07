@@ -7,14 +7,16 @@
                                                            │
                               push new:meta lease=old ◀────┘
                                    │ 거절
-                                   ▼ 다시 fetch (≤ META_CAS_RETRIES)
+                                   ▼ 지수+지터 대기 뒤 다시 fetch (≤ META_CAS_RETRIES)
 """
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from gitswarm.backoff import backoff_s
 from gitswarm.constants import META_CAS_RETRIES, META_REF, tracking_ref
 from gitswarm.driver.git import Git, LogEntry
 from gitswarm.errors import Conflict
@@ -32,6 +34,7 @@ class Change:
 @dataclass(frozen=True)
 class MetaStore:
     git: Git
+    sleep: Callable[[float], None] = time.sleep  # 시험은 no-op 을 넣는다
 
     def tip(self) -> str | None:
         return self.git.fetch(META_REF)
@@ -62,7 +65,10 @@ class MetaStore:
         return self.git.log(tracking_ref(META_REF), since)
 
     def apply(self, change: Change) -> str:
-        for _ in range(META_CAS_RETRIES):
+        for attempt in range(META_CAS_RETRIES):
+            # 같은 박자로 거절된 쓰기 주체들을 흩는다
+            if attempt:
+                self.sleep(backoff_s(attempt - 1))
             old = self.tip()
 
             # 새 tip 기준으로 다시 읽고 다시 변환한다 — 남의 변경 위에 옛 판정을 덮지 않는다

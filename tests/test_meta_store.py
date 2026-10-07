@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from gitswarm.constants import CAS_BACKOFF_BASE_S, CAS_BACKOFF_MAX_S, META_CAS_RETRIES
 from gitswarm.errors import Conflict, InvalidState
 from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
@@ -85,10 +86,18 @@ def test_apply_retries_on_concurrent_change(remote_url: str, home: Path):
     assert git_wrapper.push_count >= 2
 
 
-def test_cas_exhaustion_is_conflict(store: MetaStore, monkeypatch: pytest.MonkeyPatch):
+def test_cas_exhaustion_is_conflict(remote_url: str, home: Path, monkeypatch: pytest.MonkeyPatch):
+    slept: list[float] = []
+    store = MetaStore(Hive.init(remote_url, home).git, sleep=slept.append)
     monkeypatch.setattr(type(store.git), "push", lambda self, oid, ref, expected: False)
     with pytest.raises(Conflict):
         store.apply(Change("ws/z.json", lambda _: b"{}", "ws.created z"))
+
+    # 시도 사이마다 지수 + 지터로 쉰다: n 번째 간격 ∈ [0.5, 1.5] × min(MAX, BASE·2^n)
+    assert len(slept) == META_CAS_RETRIES - 1
+    for n, s in enumerate(slept):
+        step = min(CAS_BACKOFF_MAX_S, CAS_BACKOFF_BASE_S * 2**n)
+        assert 0.5 * step <= s <= 1.5 * step
 
 
 class _Interfere:
