@@ -26,6 +26,8 @@ jobs:
           else
             git checkout --quiet "${GITHUB_SHA}" 2>/dev/null || echo "GITHUB_SHA 미도달 — 클론 HEAD 로 검증"
           fi
+          # 토큰이 .git/config 에 남지 않게 인증 URL 제거 — BuildKit 컨텍스트로 PR 코드가 읽지 못하게
+          git remote set-url origin "https://git.keiailab.com/${GITHUB_REPOSITORY}.git"
           export DOCKER_CONFIG="$WORK/.docker"
           mkdir -p "$DOCKER_CONFIG" && cp /harbor-auth/config.json "$DOCKER_CONFIG/config.json"
           cat > Dockerfile.ci <<'DOCKERFILE'
