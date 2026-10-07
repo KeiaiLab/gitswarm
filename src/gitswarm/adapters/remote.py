@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 
@@ -19,7 +19,7 @@ class Scope(StrEnum):
 @dataclass(frozen=True)
 class Token:
     id: str
-    secret: str
+    secret: str = field(repr=False)
     scope: Scope
 
 
