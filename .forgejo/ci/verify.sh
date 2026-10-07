@@ -24,8 +24,9 @@ git --version
 uv sync --dev
 uv run ruff check src scripts tests
 uv run ruff format --check src scripts tests
-# vulture: typer·fastmcp 데코레이터가 등록하는 진입점만 허용 오탐(+ console script main)이다.
-uv run vulture src --min-confidence 60 --ignore-names "hive_init,ws_*,workspace_*,events_tail,mcp_serve,main,doctor,stats"
+# vulture: 허용 오탐은 vulture_whitelist.py 에 이름별 이유와 함께 — typer·fastmcp 데코레이터
+# 진입점 · console script main.
+uv run vulture src vulture_whitelist.py --min-confidence 60
 uv run pytest tests -q --cov --cov-report=term-missing
 uv build
 uv run --isolated --no-project --with dist/*.whl gitswarm --help >/dev/null'

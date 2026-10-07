@@ -35,6 +35,7 @@ ignore = ["E501", "RUF001", "RUF002", "RUF003"]
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["N802"]
 "src/gitswarm/errors.py" = ["N818"]
+"vulture_whitelist.py" = ["B018"]  # 이름을 "쓰는" 식 문장이 이 파일의 목적이다
 
 [tool.pyrefly]
 project-includes = ["src", "tests"]
