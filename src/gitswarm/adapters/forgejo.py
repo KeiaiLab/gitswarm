@@ -1,4 +1,8 @@
-"""Forgejo: workspace 범위 PAT. 자격은 파일에서 읽고 어디에도 다시 쓰지 않는다."""
+"""Forgejo: workspace 범위 PAT. 자격은 파일에서 읽고 어디에도 다시 쓰지 않는다.
+
+`repositories` 는 `RepoTargetOption` 객체(`{"owner", "name"}`) 배열이다. 이 모양은
+Forgejo 16.0.5 swagger 로 검증했다(문자열 `"org/repo"` 는 HTTP 422).
+"""
 
 from __future__ import annotations
 
@@ -51,10 +55,14 @@ class ForgejoAdapter:
         return f"{self.api}/api/v1/users/{self.user}/tokens"
 
     def issue_token(self, repo: str, ws_id: str, scope: Scope) -> Token:
+        owner, sep, name = repo.rpartition("/")
+        if not sep or not owner or not name:
+            raise RemoteError("forgejo token issue failed: repo must be owner/name")
+
         body = {
             "name": TOKEN_NAME_PREFIX + ws_id,
             "scopes": [SCOPE_NAMES[scope]],
-            "repositories": [repo],
+            "repositories": [{"owner": owner, "name": name}],
         }
         r = self._send("token issue", "POST", self._tokens_url(), json=body)
         if r.status_code != HTTPStatus.CREATED:

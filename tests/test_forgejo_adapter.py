@@ -38,9 +38,51 @@ def test_issue_token_is_repo_scoped(adapter: ForgejoAdapter):
     assert body == {
         "name": "gitswarm-01J",
         "scopes": ["write:repository"],
-        "repositories": ["org/repo"],
+        "repositories": [{"owner": "org", "name": "repo"}],
     }
     assert route.calls[0].request.headers["authorization"].startswith("Basic ")
+
+
+@respx.mock
+def test_issue_token_matches_forgejo_swagger_shapes(adapter: ForgejoAdapter):
+    # Shapes copied from Forgejo 16.0.5 swagger (CreateAccessTokenOption, AccessToken).
+    route = respx.post(f"{API}/api/v1/users/bot/tokens").mock(
+        return_value=httpx.Response(
+            HTTPStatus.CREATED,
+            json={
+                "id": 7,
+                "name": "gitswarm-01J",
+                "sha1": "tok",
+                "scopes": ["write:repository"],
+                "repositories": [{"owner": "org", "name": "repo"}],
+                "token_last_eight": "abcd1234",
+                "created_at": "2026-10-07T00:00:00Z",
+            },
+        )
+    )
+    t = adapter.issue_token("org/repo", "01J", Scope.WRITE)
+    assert (t.id, t.secret, t.scope) == ("7", "tok", Scope.WRITE)
+    assert json.loads(route.calls[0].request.content)["repositories"] == [
+        {"owner": "org", "name": "repo"}
+    ]
+
+
+@respx.mock
+def test_issue_token_splits_on_last_slash(adapter: ForgejoAdapter):
+    route = respx.post(f"{API}/api/v1/users/bot/tokens").mock(
+        return_value=httpx.Response(HTTPStatus.CREATED, json={"id": 1, "sha1": "t"})
+    )
+    adapter.issue_token("a/b/c", "01J", Scope.READ)
+    body = json.loads(route.calls[0].request.content)
+    assert body["repositories"] == [{"owner": "a/b", "name": "c"}]
+
+
+@respx.mock
+def test_issue_token_rejects_repo_without_slash(adapter: ForgejoAdapter):
+    route = respx.route().mock(return_value=httpx.Response(HTTPStatus.CREATED))
+    with pytest.raises(RemoteError, match="repo must be owner/name"):
+        adapter.issue_token("repo", "01J", Scope.READ)
+    assert not route.called
 
 
 @respx.mock

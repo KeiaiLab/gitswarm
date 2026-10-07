@@ -355,7 +355,8 @@ anything else (or no entry) selects plain. Both `https://` and scp-style
   `token: null`. Not an error.
 - **forgejo**: `POST /api/v1/users/<user>/tokens` with name
   `gitswarm-<ws_id>`, scope `read:repository` or `write:repository`, and
-  `repositories: [<org/repo>]`, so the PAT reaches one repository. Basic
+  `repositories: [{owner, name}]` (`RepoTargetOption`, split on the last
+  `/`), so the PAT reaches one repository. Basic
   auth `(user, credential)` on every request. `credential` is read from
   `credential_file` and kept with `field(repr=False)`. Error messages carry
   the operation, HTTP status or exception class name, never URL or
