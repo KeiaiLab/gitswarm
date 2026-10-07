@@ -8,7 +8,7 @@ from gitswarm.service.doctor import diagnose
 from gitswarm.service.workspace import Checkout, open_service
 from tests.conftest import git
 
-NAMES = ["git", "home", "config", "remote", "hive", "ssh_mux"]
+NAMES = ["git", "home", "config", "remote", "hive", "tokens", "ssh_mux"]
 
 
 def _check(report: dict, name: str) -> dict:
@@ -27,6 +27,27 @@ def test_healthy_setup_passes(remote_url: str, home: Path):
 def test_hive_reports_worktree_count(remote_url: str, home: Path):
     open_service(remote_url, home).create("main", {}, 0, None, Checkout.WORKTREE, {})
     assert "1 worktree" in _check(diagnose(remote_url, home), "hive")["detail"]
+
+
+def test_tokens_check(remote_url: str, home: Path):
+    assert _check(diagnose(remote_url, home), "tokens") == {
+        "name": "tokens",
+        "ok": True,
+        "detail": "no hive; nothing recorded",
+    }
+    open_service(remote_url, home).create("main", {}, 0, None, Checkout.NONE, {})
+    assert _check(diagnose(remote_url, home), "tokens")["detail"] == "every recorded token revoked"
+
+
+def test_tokens_check_reports_unreachable_meta(remote_url: str, home: Path, monkeypatch):
+    open_service(remote_url, home)
+
+    def fail(self, ref):
+        raise RemoteError("meta fetch failed")
+
+    monkeypatch.setattr(Git, "fetch", fail)
+    check = _check(diagnose(remote_url, home), "tokens")
+    assert check == {"name": "tokens", "ok": False, "detail": "RemoteError: meta fetch failed"}
 
 
 def test_no_remote_skips_remote_checks(home: Path):

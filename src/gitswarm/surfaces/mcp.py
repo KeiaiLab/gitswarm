@@ -158,7 +158,7 @@ def doctor(remote: str | None = None) -> dict:
 @mcp.tool
 @payload
 def stats(remote: str | None = None) -> dict:
-    """이벤트 로그 집계. Returns {ok, by_kind, by_state, open_oldest_age_s, total_events, invalid, remote} (open 이 없으면 open_oldest_age_s=null). On failure returns {ok: false, error: {kind, detail}}."""
+    """이벤트 로그 집계. Returns {ok, by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens, remote} (open 이 없으면 open_oldest_age_s=null). On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, summarize(svc))
 

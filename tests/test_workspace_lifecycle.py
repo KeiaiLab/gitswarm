@@ -10,6 +10,8 @@ from gitswarm.adapters.remote import Capability, Scope, Token
 from gitswarm.adapters.select import repo_name
 from gitswarm.constants import META_REF, lease_ref, meta_path, tracking_ref, ws_ref
 from gitswarm.errors import Conflict, InvalidState, NotFound, RemoteError
+from gitswarm.service.doctor import diagnose
+from gitswarm.service.stats import summarize
 from gitswarm.service.workspace import (
     ULID_RE,
     Checkout,
@@ -153,6 +155,7 @@ def test_token_issued_persisted_and_revoked(remote_url: str, home: Path):
     assert adapter.issued == [(repo_name(hive.url), r.id, Scope.WRITE)]
     svc.drop(r.id)
     assert adapter.revoked == ["42"]
+    assert svc.get(r.id).token_id is None
 
 
 def test_branch_push_rejected_writes_nothing(svc: WorkspaceService, monkeypatch):
@@ -400,10 +403,28 @@ def test_drop_survives_revoke_remote_error(remote_url: str, home: Path, capsys):
     r = svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
 
     # 브랜치는 이미 지웠다 — revoke 실패가 기록을 open 에 묶어 두지 않는다
-    assert svc.drop(r.id).state is WsState.DROPPED
-    assert svc.get(r.id).state is WsState.DROPPED
+    dropped = svc.drop(r.id)
+    assert dropped.state is WsState.DROPPED
     err = capsys.readouterr().err.strip().splitlines()
     assert len(err) == 1 and err[0].startswith("gitswarm: token 42 not revoked")
+
+    # 실패는 상태에 남는다 — token_id 가 그대로, stats·doctor 가 센다
+    assert dropped.token_id == "42" and svc.get(r.id).token_id == "42"
+    assert summarize(svc)["unrevoked_tokens"] == 1
+    tokens = next(c for c in diagnose(remote_url, home)["checks"] if c["name"] == "tokens")
+    assert tokens["ok"] is False and r.id in tokens["detail"] and "ws drop" in tokens["detail"]
+
+    # 다시 drop 해도 여전히 실패면 그대로
+    assert svc.drop(r.id).token_id == "42"
+    assert len(capsys.readouterr().err.strip().splitlines()) == 1
+
+    # 되는 어댑터로 다시 drop — revoke 를 재시도하고 token_id 를 지운다
+    working = TokenAdapter()
+    svc.adapter = working
+    assert svc.drop(r.id).token_id is None
+    assert working.revoked == ["42"] and svc.get(r.id).token_id is None
+    assert summarize(svc)["unrevoked_tokens"] == 0
+    assert svc.drop(r.id).token_id is None and working.revoked == ["42"]
 
 
 def test_open_service_creates_missing_hive(remote_url: str, home: Path):

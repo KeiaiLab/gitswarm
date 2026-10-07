@@ -49,6 +49,7 @@ EV_CREATED = "ws.created"
 EV_PUBLISHED = "ws.published"
 EV_DROPPED = "ws.dropped"
 EV_EXPIRED = "ws.expired"
+EV_REVOKED = "ws.revoked"  # dropped 레코드의 토큰을 뒤늦게 회수했다
 
 # 두 publish 경로가 같은 판정, 다음 행동만 다르다
 NOTHING_PUBLISHED = "nothing published: branch is still at base"
@@ -333,6 +334,16 @@ def _salvage(ws_id: str, prev: bytes | None, now: datetime) -> Workspace:
     )
 
 
+def unrevoked(records: list[Workspace]) -> list[str]:
+    """회수에 실패한 토큰을 아직 들고 있는 dropped 레코드의 id."""
+    return [w.id for w in records if w.state is WsState.DROPPED and w.token_id is not None]
+
+
+def _revoked_if(ws: Workspace, revoked: bool) -> Workspace:
+    """회수됐으면 token_id 를 지운다 — 남은 token_id 는 회수 실패의 표시다."""
+    return replace(ws, token_id=None) if revoked else ws
+
+
 def _new_only(prev: bytes | None, ws: Workspace) -> Workspace:
     """생성은 빈 자리에만 쓴다 — 같은 id 가 이미 있으면 ULID 충돌이다."""
     if prev is not None:
@@ -527,8 +538,19 @@ class WorkspaceService:
         except InvalidState:
             return self._force_drop(ws_id)
         if ws.state is WsState.DROPPED:
-            return ws
+            return self._retry_revoke(ws)
         return self._drop_as(ws, EV_DROPPED, LeaseMode.FOLLOW)
+
+    def _retry_revoke(self, ws: Workspace) -> Workspace:
+        """dropped 인데 token_id 가 남았으면 지난 회수가 실패한 것이다 — 다시 해 본다."""
+        token_id = ws.token_id
+        if token_id is None or not self._revoke(token_id):
+            return ws
+
+        def clear(cur: Workspace) -> Workspace:
+            return _revoked_if(cur, cur.token_id == token_id)
+
+        return self._transition(ws.id, EV_REVOKED, clear)
 
     def _force_drop(self, ws_id: str) -> Workspace:
         """망가진 레코드의 회수. 지우는 브랜치는 id 로 재계산한 것뿐이다."""
@@ -544,11 +566,14 @@ class WorkspaceService:
         self.hive.git.delete_remote(branch, None)
         self._clear_local(ws_id, branch)
         token_id = raw.get("token_id")
+        revoked = True  # _salvage 는 유효한 token_id 만 옮긴다 — 그것만 회수 대상이다
         if isinstance(token_id, str) and TOKEN_ID_RE.fullmatch(token_id):
-            self._revoke(token_id)
+            revoked = self._revoke(token_id)
 
         now = self.clock()
-        return self._record(ws_id, EV_DROPPED, lambda prev: _salvage(ws_id, prev, now))
+        return self._record(
+            ws_id, EV_DROPPED, lambda prev: _revoked_if(_salvage(ws_id, prev, now), revoked)
+        )
 
     def _drop_as(self, ws: Workspace, kind: str, mode: LeaseMode) -> Workspace:
         # 원격 먼저, lease 로 — 실패하면 로컬도 그대로 둔다
@@ -556,10 +581,11 @@ class WorkspaceService:
             raise Conflict(f"{ws.branch} moved on remote while dropping; not deleting")
 
         self._clear_local(ws.id, ws.branch)
-        if ws.token_id:
-            self._revoke(ws.token_id)
+        revoked = self._revoke(ws.token_id) if ws.token_id else True
 
-        return self._transition(ws.id, kind, lambda cur: cur.with_state(WsState.DROPPED))
+        return self._transition(
+            ws.id, kind, lambda cur: _revoked_if(cur.with_state(WsState.DROPPED), revoked)
+        )
 
     def _delete_branch(self, branch: str, mode: LeaseMode) -> bool:
         """원격 브랜치 삭제. 본 oid 로 lease, 거절(또는 본 적 없음)이면 지금 tip 을 본다.
@@ -590,16 +616,19 @@ class WorkspaceService:
             if self.hive.git.exists(ref):
                 self.hive.git.delete_ref(ref)
 
-    def _revoke(self, token_id: str) -> None:
+    def _revoke(self, token_id: str) -> bool:
         """기록된 토큰은 항상 회수를 시도한다 — 어댑터 설정이 바뀌어도 토큰은 원격에 살아 있다.
 
-        실패는 한 줄로 남기고 넘어간다 — 브랜치는 이미 지웠으니 기록은 dropped 로 가야 한다.
+        실패는 한 줄로 남기고 False — 브랜치는 이미 지웠으니 기록은 dropped 로 가되,
+        token_id 를 남겨 stats·doctor 가 보게 한다(`ws drop <id>` 가 다시 시도한다).
         """
         try:
             self.adapter.revoke_token(token_id)
         except (Unsupported, RemoteError) as e:
             reason = e.detail.partition("\n")[0]
             print(f"gitswarm: token {token_id} not revoked: {reason}", file=sys.stderr)
+            return False
+        return True
 
     # ── 발행 ──────────────────────────────────────────────────
     def publish(self, ws_id: str) -> str:

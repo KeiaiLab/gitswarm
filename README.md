@@ -20,8 +20,8 @@ workspace 를 만들고, 체크아웃 없이 읽고, 발행하고, 거둔다. �
     gitswarm ws publish 01J…
     gitswarm ws drop 01J…
     gitswarm events tail
-    gitswarm doctor                         # git·홈·설정·원격·hive 점검, 실패 시 종료코드 1
-    gitswarm stats                          # 이벤트 종류별·상태별 수, 가장 오래 열린 workspace 나이
+    gitswarm doctor                         # git·홈·설정·원격·hive·미회수 토큰 점검, 실패 시 종료코드 1
+    gitswarm stats                          # 이벤트 종류별·상태별 수, 가장 오래 열린 workspace 나이, 미회수 토큰 수
 
 원격은 `--remote` → `$GITSWARM_REMOTE` → cwd(hive worktree 면 그 hive, git 레포면 origin) 순으로
 정한다. 성공 출력의 `remote` 가 실제로 쓴 원격이다. hive 는 첫 ws 명령이 만든다(`hive init` 은

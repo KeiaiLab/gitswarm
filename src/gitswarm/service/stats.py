@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from collections import Counter
 
-from gitswarm.service.workspace import WorkspaceService, WsState
+from gitswarm.service.workspace import WorkspaceService, WsState, unrevoked
 
 
 def summarize(svc: WorkspaceService) -> dict:
-    """{by_kind, by_state, open_oldest_age_s, total_events, invalid}. open 이 없으면 age 는 None."""
+    """{by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens}.
+
+    open 이 없으면 age 는 None. unrevoked_tokens = 회수에 실패한 토큰을 든 dropped 레코드 수.
+    """
     events = svc.events(None)
     good, invalid = svc.list_report(None)
 
@@ -22,4 +25,5 @@ def summarize(svc: WorkspaceService) -> dict:
         "open_oldest_age_s": oldest,
         "total_events": len(events),
         "invalid": len(invalid),
+        "unrevoked_tokens": len(unrevoked(good)),
     }

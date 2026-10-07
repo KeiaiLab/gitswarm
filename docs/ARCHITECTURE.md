@@ -281,8 +281,12 @@ create-to-drop cycles and exits 1 when a command exceeds its budget
 
 **drop** (`-> dropped`, idempotent) deletes the remote branch, local refs
 (branch, peek, lease), the worktree, revokes the token, then records
-`ws.dropped`. The remote delete is leased on the last seen oid
-(`_delete_branch`):
+`ws.dropped`. A revoke that fails (`Unsupported`, `RemoteError`) prints one
+stderr line and does not stop the drop; the record keeps its `token_id`, a
+successful revoke clears it. `stats.unrevoked_tokens` and the doctor check
+`tokens` count dropped records still holding one, and `drop` of such a
+record retries the revoke (`ws.revoked` on success). The remote delete is
+leased on the last seen oid (`_delete_branch`):
 
 | mode | used by | when the lease is rejected or no oid was seen |
 |---|---|---|

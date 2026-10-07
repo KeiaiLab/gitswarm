@@ -21,6 +21,7 @@ def test_stats_after_create_publish_drop(remote_url: str, home: Path):
         "open_oldest_age_s": None,
         "total_events": 0,
         "invalid": 0,
+        "unrevoked_tokens": 0,
     }
 
     a = svc.create("main", {}, 0, None, Checkout.WORKTREE, {})
@@ -38,4 +39,5 @@ def test_stats_after_create_publish_drop(remote_url: str, home: Path):
         "open_oldest_age_s": 100,
         "total_events": 5,
         "invalid": 0,
+        "unrevoked_tokens": 0,
     }

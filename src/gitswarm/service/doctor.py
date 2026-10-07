@@ -1,7 +1,7 @@
 """환경 점검. 검사는 서로 독립이다 — 하나가 실패해도 나머지를 본다.
 
 git ─ home ─ config ─┬─ remote 없음 ──▶ 끝(원격 검사 생략)
-                     └─ remote ─ hive ─ ssh_mux
+                     └─ remote ─ hive ─ tokens ─ ssh_mux
 """
 
 from __future__ import annotations
@@ -12,12 +12,15 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from gitswarm.adapters.plain import PlainAdapter
 from gitswarm.adapters.select import FORGEJO, GITHUB
 from gitswarm.config import CONFIG_FILE, Config, load_config
 from gitswarm.driver.git import Git
 from gitswarm.errors import GitswarmError, InvalidState, NotFound, RemoteError
 from gitswarm.events import sinks_from_config
+from gitswarm.service.workspace import WorkspaceService, unrevoked
 from gitswarm.store.hive import REPO_DIR, Hive, hive_path
+from gitswarm.store.meta import MetaStore
 from gitswarm.urls import is_ssh_url, validate_remote_url
 
 # 쓰는 것(ls-remote --symref · merge-base --is-ancestor · cat-file --batch ·
@@ -50,6 +53,7 @@ def diagnose(remote: str | None, home: Path) -> dict:
         checks += [
             _guard("remote", lambda: _remote(remote)),
             _guard("hive", lambda: _hive(remote, home)),
+            _guard("tokens", lambda: _tokens(remote, home)),
             _guard("ssh_mux", lambda: _ssh_mux(remote, home)),
         ]
     return {"ok": all(c.ok for c in checks), "checks": [asdict(c) for c in checks]}
@@ -140,6 +144,24 @@ def _hive(remote: str, home: Path) -> Check:
     except NotFound:
         return Check("hive", True, "absent; the first ws command creates it")
     return Check("hive", True, f"{hive.path}: {hive.worktree_count()} worktree(s)")
+
+
+def _tokens(remote: str, home: Path) -> Check:
+    """회수에 실패한 토큰. 읽기만 하므로 어댑터는 필요 없다. meta 를 못 읽으면 _guard 가 실패로 바꾼다."""
+    try:
+        hive = Hive.open(remote, home)
+    except NotFound:
+        return Check("tokens", True, "no hive; nothing recorded")
+
+    records, _ = WorkspaceService(hive, MetaStore(hive.git), PlainAdapter()).list_report(None)
+
+    ids = unrevoked(records)
+    if ids:
+        detail = f"{len(ids)} unrevoked token(s) on {', '.join(ids)}"
+        return Check(
+            "tokens", False, f"{detail}; run `gitswarm ws drop <id>` again to retry revoke"
+        )
+    return Check("tokens", True, "every recorded token revoked")
 
 
 def _ssh_mux(remote: str, home: Path) -> Check:
