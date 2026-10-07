@@ -3,10 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from gitswarm.constants import tracking_ref
+from gitswarm.constants import peek_ref, tracking_ref
 from gitswarm.driver.git import Git
 from gitswarm.errors import RemoteError
-from tests.conftest import git
+from tests.conftest import count_network, git
 
 
 @pytest.fixture
@@ -79,15 +79,42 @@ def test_push_lease_new_oid_with_none_expected(repo: Git):
     assert repo.push(newer_oid, "refs/heads/gitswarm/test_b", expected=None) is False
 
 
-def test_push_lease_same_oid_with_wrong_expected(repo: Git):
-    # (c) remote at A, push A with expected=<wrong oid> → False
-    tree = repo.build_tree({})
-    oid = repo.commit_tree(tree, [], "commit")
-    # Push oid to create the ref
-    assert repo.push(oid, "refs/heads/gitswarm/test_c", expected=None) is True
-    # Try to push the same oid with wrong expected (pre-check should catch it) → False
-    wrong_oid = repo.fetch("refs/heads/main")
-    assert repo.push(oid, "refs/heads/gitswarm/test_c", expected=wrong_oid) is False
+@pytest.mark.parametrize("lease", ["none", "wrong", "held"])
+def test_push_same_oid_honours_lease(repo: Git, monkeypatch: pytest.MonkeyPatch, lease: str):
+    """원격이 이미 oid 를 들고 있으면 git 은 lease 를 보지 않고 "Everything up-to-date" 로 rc 0.
+
+    그 구멍은 결과 해석으로 닫는다 — 사전 ls-remote 없이 push 한 번.
+    """
+    ref = "refs/heads/gitswarm/test_c"
+    oid = repo.commit_tree(repo.build_tree({}), [], "commit")
+    assert repo.push(oid, ref, expected=None) is True
+    expected = {"none": None, "wrong": repo.fetch("refs/heads/main"), "held": oid}[lease]
+
+    calls = count_network(monkeypatch)
+    assert repo.push(oid, ref, expected=expected) is (lease == "held")
+    assert calls == ["push"]
+    assert repo.ls_remote(ref) == oid
+
+
+@pytest.mark.parametrize("op", ["fetch", "peek"])
+@pytest.mark.parametrize("present", [True, False])
+def test_fetch_and_peek_are_one_round_trip(
+    repo: Git, monkeypatch: pytest.MonkeyPatch, op: str, present: bool
+):
+    """없는 ref 는 fetch 의 "couldn't find remote ref" 로 판정한다 — 사전 ls-remote 없음."""
+    ref = "refs/heads/main" if present else "refs/heads/nope"
+    local = {"fetch": tracking_ref, "peek": peek_ref}[op](ref)
+    stale = repo.commit_tree(repo.build_tree({}), [], "stale")
+    repo.update_ref(local, stale)
+
+    calls = count_network(monkeypatch)
+    oid = getattr(repo, op)(ref)
+    assert calls == ["fetch"]
+    if present:
+        assert oid == repo.rev_parse(local) != stale
+        return
+    assert oid is None
+    assert repo.rev_parse(local) is None
 
 
 def test_delete_remote_is_idempotent(repo: Git):
@@ -163,10 +190,9 @@ def test_push_lease_stale_after_remote_moved_returns_false(tmp_path: Path):
     g = Git.init_bare(tmp_path / "work.git")
     g.set_origin(remote_path.as_uri())
 
-    # Get base oid
-    base = g.fetch("refs/heads/main")
-    # Push to create the ref
-    g.push(base, "refs/heads/race-test", expected=None)
+    # 빈 원격 — 기준 커밋을 만들어 ref 를 연다
+    base = g.commit_tree(g.build_tree({}), [], "base")
+    assert g.push(base, "refs/heads/race-test", expected=None) is True
 
     # Simulate a race: another process updates the remote
     # We do this by directly updating the remote's ref (simulating a competing push)

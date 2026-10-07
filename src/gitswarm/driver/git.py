@@ -20,6 +20,7 @@ from gitswarm.constants import (
 from gitswarm.errors import RemoteError
 
 RC_LS_REMOTE_MISSING = 2
+RC_FATAL = 128
 # Four wordings measured on git 2.55: sequential stale lease; server-side race on update; server-side race on create.
 # Any "cannot lock ref" server message is lock contention with a sibling writer; the CAS loop re-fetches and retries.
 # Hook declines ("pre-receive hook declined") must NOT match.
@@ -33,6 +34,8 @@ REJECTED_MARKERS = (
 # 로컬 ref 디렉터리를 형제 프로세스가 동시에 만들거나 지울 때(fetch 가 tracking·peek ref 를 쓸 때).
 LOCAL_LOCK_MARKER = "cannot lock ref"
 MISSING_REMOTE_REF_MARKERS = ("couldn't find remote ref", "remote ref does not exist")
+# 원격이 이미 그 oid 를 들고 있으면 git 은 lease 를 보지 않고 이 문구와 rc 0 으로 끝낸다(-q 면 숨긴다).
+UP_TO_DATE_MARKER = "Everything up-to-date"
 
 
 def is_lease_rejection(stderr: str) -> bool:
@@ -79,6 +82,8 @@ class Git:
             "GIT_COMMITTER_NAME": COMMIT_AUTHOR,
             "GIT_COMMITTER_EMAIL": COMMIT_EMAIL,
             "GIT_TERMINAL_PROMPT": "0",
+            # 판정이 git 문구(거절·없음·up-to-date)에 기댄다 — 번역되면 안 된다
+            "LC_ALL": "C",
         }
         p = subprocess.run(
             ["git", "-C", str(self.repo), *args],
@@ -140,40 +145,39 @@ class Git:
         return self._lock_retry(lambda: self._fetch_once(ref))
 
     def _fetch_once(self, ref: str) -> str | None:
-        if self.ls_remote(ref) is None:
-            self._run("update-ref", "-d", tracking_ref(ref))
-            return None
-        self._run("fetch", "-q", "origin", f"+{ref}:{tracking_ref(ref)}")
-        return self.rev_parse(tracking_ref(ref))
+        return self._fetch_into("origin", ref, tracking_ref(ref))
 
     def peek(self, ref: str) -> str | None:
         """원격 ref 를 peek ref 로 받아 oid 를 돌려준다. tracking ref 는 건드리지 않는다."""
-        return self._lock_retry(lambda: self._peek_once(ref))
-
-    def _peek_once(self, ref: str) -> str | None:
-        if self.ls_remote(ref) is None:
-            self._run("update-ref", "-d", peek_ref(ref))
-            return None
         # URL 로 받는다 — 이름 있는 remote 로 받으면 git 이 tracking ref 도 덩달아 갱신한다.
-        self._run("fetch", "-q", self.origin_url(), f"+{ref}:{peek_ref(ref)}")
-        return self.rev_parse(peek_ref(ref))
+        return self._lock_retry(lambda: self._fetch_into(self.origin_url(), ref, peek_ref(ref)))
+
+    def _fetch_into(self, source: str, ref: str, local: str) -> str | None:
+        """원격 ref 를 local 로 강제 갱신. 원격에 없으면 local 도 지우고 None.
+
+        사전 ls-remote 없이 fetch 한 번 — 없음은 fetch 의 오류 문구로 판정한다.
+        """
+        p = self._run("fetch", "-q", source, f"+{ref}:{local}", ok_rc=(0, RC_FATAL))
+        if p.returncode == 0:
+            return self.rev_parse(local)
+
+        err = p.stderr.decode(errors="replace")
+        if not any(m in err for m in MISSING_REMOTE_REF_MARKERS):
+            raise RemoteError(err.strip())
+        self._run("update-ref", "-d", local)
+        return None
 
     def push(self, oid: str, ref: str, expected: str | None) -> bool:
         """lease push. expected=None 은 "원격에 그 ref 가 없어야 한다"."""
-        # Pre-check: if remote already holds oid and that differs from expected,
-        # reject immediately. This handles the case where git's "up-to-date" exit
-        # would short-circuit the lease check.
-        remote_oid = self.ls_remote(ref)
-        if remote_oid == oid:
-            expect_val = NULL_OID if expected is None else expected
-            if remote_oid != expect_val:
-                return False
         expect_val = NULL_OID if expected is None else expected
         lease = f"--force-with-lease={ref}:{expect_val}"
-        p = self._run("push", "-q", "origin", lease, f"{oid}:{ref}", ok_rc=(0, 1))
-        if p.returncode == 0:
-            return True
+        # -q 없이 — 판정에 UP_TO_DATE_MARKER 가 필요하다
+        p = self._run("push", "origin", lease, f"{oid}:{ref}", ok_rc=(0, 1))
         err = p.stderr.decode(errors="replace")
+
+        # 원격이 이미 oid 면 git 은 lease 를 건너뛴다 — 기대값이 그 oid 였을 때만 성공이다
+        if p.returncode == 0:
+            return UP_TO_DATE_MARKER not in err or expected == oid
         if is_lease_rejection(err):
             return False
         raise RemoteError(err.strip())

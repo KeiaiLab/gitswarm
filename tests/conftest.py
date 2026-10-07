@@ -37,6 +37,25 @@ def ls_remote_prefix(repo_dir: Path, prefix: str) -> dict[str, str]:
     return refs
 
 
+NETWORK_COMMANDS = ("fetch", "push", "ls-remote")
+
+
+def count_network(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Git._run 중 원격을 타는 호출만 기록한다. 반환 목록이 호출마다 자란다."""
+    from gitswarm.driver.git import Git
+
+    real = Git._run
+    calls: list[str] = []
+
+    def run(self, *args, **kw):
+        if args[0] in NETWORK_COMMANDS:
+            calls.append(args[0])
+        return real(self, *args, **kw)
+
+    monkeypatch.setattr(Git, "_run", run)
+    return calls
+
+
 @pytest.fixture
 def remote_url(tmp_path: Path) -> str:
     """main 에 커밋 1개(README.md)가 있는 bare 원격."""
