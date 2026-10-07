@@ -54,7 +54,21 @@ def is_lease_rejection(stderr: str) -> bool:
 # SSH 다중화: 명령 하나의 git 호출들이(그리고 ControlPersist 동안 뒤 명령들도) 핸드셰이크 하나를
 # 나눠 쓴다. 호출마다 새 SSH 를 열면 RTT 0.2 s 원격에서 명령당 수 초가 든다.
 NETWORK_COMMANDS = frozenset({"fetch", "push", "ls-remote"})
-GIT_NETWORK_TIMEOUT_S = 60  # 응답 없는 원격(또는 옵션으로 읽힌 명령)이 명령을 영원히 잡지 않게
+# 멈춤 한도. 벽시계 한도는 짧은 조회(ls-remote)에만 — 큰 base 의 첫 fetch 는 몇 분이 정상이다.
+# 전송(fetch·push)은 "진행 없음"만 끊는다: http 는 저속 한도, ssh 는 keepalive.
+PROBE_COMMAND = "ls-remote"
+GIT_PROBE_TIMEOUT_S = 60
+HTTP_LOW_SPEED_LIMIT = 1000  # 바이트/초 — 이 아래로 HTTP_LOW_SPEED_TIME_S 동안이면 끊는다
+HTTP_LOW_SPEED_TIME_S = 60
+SSH_ALIVE_INTERVAL_S = 15
+SSH_ALIVE_COUNT_MAX = 4  # 응답 없는 서버를 15 s × 4 = 60 s 뒤 끊는다
+SSH_CONNECT_TIMEOUT_S = 30
+STALL_CONFIG = (
+    "-c",
+    f"http.lowSpeedLimit={HTTP_LOW_SPEED_LIMIT}",
+    "-c",
+    f"http.lowSpeedTime={HTTP_LOW_SPEED_TIME_S}",
+)
 CORE_SSH_COMMAND = "core.sshCommand"
 CALLER_SSH_ENVS = ("GIT_SSH_COMMAND", "GIT_SSH")
 SSH_CONTROL_DIR = ".ssh-control"
@@ -107,19 +121,20 @@ class Git:
             # 판정이 git 문구(거절·없음·up-to-date)에 기댄다 — 번역되면 안 된다
             "LC_ALL": "C",
         }
-        network = args[0] in NETWORK_COMMANDS
-        if network:
+        stall: tuple[str, ...] = ()
+        if args[0] in NETWORK_COMMANDS:
             env |= self._ssh_env()
+            stall = STALL_CONFIG
         try:
             p = subprocess.run(
-                ["git", "-C", str(self.repo), *args],
+                ["git", "-C", str(self.repo), *stall, *args],
                 input=data,
                 env=env,
                 capture_output=True,
-                timeout=GIT_NETWORK_TIMEOUT_S if network else None,
+                timeout=GIT_PROBE_TIMEOUT_S if args[0] == PROBE_COMMAND else None,
             )
         except subprocess.TimeoutExpired:
-            raise RemoteError(f"git {args[0]} timed out after {GIT_NETWORK_TIMEOUT_S}s") from None
+            raise RemoteError(f"git {args[0]} timed out after {GIT_PROBE_TIMEOUT_S}s") from None
         if p.returncode not in ok_rc:
             raise RemoteError(
                 p.stderr.decode(errors="replace").strip() or f"git {args[0]} rc={p.returncode}"
@@ -140,6 +155,9 @@ class Git:
         control_path = shlex.quote('ControlPath="' + path + '"')
         cmd = (
             f"ssh -o ControlMaster=auto -o {control_path} -o ControlPersist={SSH_CONTROL_PERSIST_S}"
+            f" -o ServerAliveInterval={SSH_ALIVE_INTERVAL_S}"
+            f" -o ServerAliveCountMax={SSH_ALIVE_COUNT_MAX}"
+            f" -o ConnectTimeout={SSH_CONNECT_TIMEOUT_S}"
         )
         return {"GIT_SSH_COMMAND": cmd}
 

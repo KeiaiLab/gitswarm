@@ -498,20 +498,68 @@ def test_option_shaped_url_is_never_an_option(tmp_path: Path):
     assert not pwned.exists()
 
 
-def test_network_commands_time_out(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    from gitswarm.driver.git import GIT_NETWORK_TIMEOUT_S
-
-    seen: list[object] = []
+def _record_runs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[list[str], object]]:
+    seen: list[tuple[list[str], object]] = []
 
     def run(cmd, **kw):
-        seen.append(kw.get("timeout"))
+        seen.append((cmd, kw.get("timeout")))
         if "ls-remote" in cmd:
             raise subprocess.TimeoutExpired(cmd, kw["timeout"])
         return subprocess.CompletedProcess(cmd, 0, b"", b"")
 
     monkeypatch.setattr("gitswarm.driver.git.subprocess.run", run)
     monkeypatch.setenv("GIT_SSH_COMMAND", "ssh")  # 다중화 판정의 git config 호출을 건너뛴다
+    return seen
+
+
+def test_only_probes_have_a_wall_clock_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """큰 base 의 첫 fetch 는 60 초를 넘을 수 있다 — 전송은 멈춤만 끊고, ls-remote 만 벽시계로."""
+    from gitswarm.driver.git import GIT_PROBE_TIMEOUT_S
+
+    seen = _record_runs(monkeypatch)
     with pytest.raises(RemoteError, match="git ls-remote timed out"):
         Git(tmp_path).ls_remote("HEAD")
-    Git(tmp_path).rev_parse("HEAD")
-    assert seen == [GIT_NETWORK_TIMEOUT_S, None]
+    for args in (
+        ("fetch", "-q", "--", "origin", "x"),
+        ("push", "--", "origin", "x"),
+        ("rev-parse",),
+    ):
+        Git(tmp_path)._run(*args)
+    assert [t for _, t in seen] == [GIT_PROBE_TIMEOUT_S, None, None, None]
+
+
+def test_transfers_bound_http_stalls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from gitswarm.driver.git import HTTP_LOW_SPEED_LIMIT, HTTP_LOW_SPEED_TIME_S
+
+    seen = _record_runs(monkeypatch)
+    Git(tmp_path)._run("fetch", "-q")
+    Git(tmp_path)._run("rev-parse")
+    stall = [
+        "-c",
+        f"http.lowSpeedLimit={HTTP_LOW_SPEED_LIMIT}",
+        "-c",
+        f"http.lowSpeedTime={HTTP_LOW_SPEED_TIME_S}",
+    ]
+    fetch_cmd, local_cmd = seen[0][0], seen[1][0]
+    assert fetch_cmd[3 : 3 + len(stall)] == stall and fetch_cmd[3 + len(stall)] == "fetch"
+    assert "-c" not in local_cmd
+
+
+def test_ssh_command_keeps_connections_alive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from gitswarm.driver.git import (
+        SSH_ALIVE_COUNT_MAX,
+        SSH_ALIVE_INTERVAL_S,
+        SSH_CONNECT_TIMEOUT_S,
+    )
+
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.delenv("GIT_SSH", raising=False)
+    monkeypatch.setattr("gitswarm.driver.git.SOCKET_PATH_MAX", 4096)
+    repo = Git.init_bare(tmp_path / "r.git")
+    opts = shlex.split(_captured_env(monkeypatch, repo, "fetch")["GIT_SSH_COMMAND"])
+    for opt in (
+        f"ServerAliveInterval={SSH_ALIVE_INTERVAL_S}",
+        f"ServerAliveCountMax={SSH_ALIVE_COUNT_MAX}",
+        f"ConnectTimeout={SSH_CONNECT_TIMEOUT_S}",
+    ):
+        assert opt in opts
