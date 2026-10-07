@@ -21,7 +21,7 @@ from gitswarm.constants import (
     peek_ref,
     tracking_ref,
 )
-from gitswarm.errors import RemoteError
+from gitswarm.errors import InvalidState, RemoteError
 
 RC_LS_REMOTE_MISSING = 2
 RC_NO_SUCH_REMOTE = 2
@@ -370,8 +370,9 @@ class Git:
         """
         if not revs:
             return {}
+        # 줄 하나 = rev 하나 — 줄바꿈이 든 rev 는 다음 요청을 위조한다(meta 트리 이름은 원격이 정한다)
         if any("\n" in rev for rev in revs):
-            raise ValueError("rev contains a newline")
+            raise InvalidState("rev contains a newline")
 
         data = "".join(f"{rev}\n" for rev in revs).encode()
         out = self._run("cat-file", "--batch", data=data).stdout

@@ -7,16 +7,18 @@ from pathlib import Path
 import pytest
 
 from gitswarm.adapters.plain import PlainAdapter
-from gitswarm.constants import lease_ref, meta_path, peek_ref, tracking_ref, ws_ref
+from gitswarm.constants import META_REF, lease_ref, meta_path, peek_ref, tracking_ref, ws_ref
 from gitswarm.errors import Conflict, InvalidState, NotFound, RemoteError
 from gitswarm.service import workspace as ws_mod
+from gitswarm.service.doctor import diagnose
+from gitswarm.service.stats import summarize
 from gitswarm.service.workspace import Checkout, Workspace, WorkspaceService, WsState
 from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
 from gitswarm.surfaces import mcp as mcp_mod
 from gitswarm.surfaces.common import parse_state
 from tests.conftest import ls_remote_prefix
-from tests.test_workspace_lifecycle import TokenAdapter
+from tests.test_workspace_lifecycle import RevokeFailsAdapter, TokenAdapter
 
 FORGED_ID = "01J00000000000000000000001"
 OTHER_ID = "01J00000000000000000000002"
@@ -84,8 +86,68 @@ def test_force_drop_revokes_token_of_malformed_record(remote_url: str, home: Pat
     d = json.loads(svc.store.read(meta_path(r.id))) | {"ttl_s": -5}
     _write(svc, r.id, json.dumps(d).encode())
 
-    assert svc.drop(r.id).state is WsState.DROPPED
+    dropped = svc.drop(r.id)
+    assert dropped.state is WsState.DROPPED
     assert adapter.revoked == ["42"]
+    # 회수됐으면 token_id 를 지운다
+    assert dropped.token_id is None and svc.get(r.id).token_id is None
+
+
+def test_force_drop_keeps_token_when_revoke_fails(remote_url: str, home: Path, capsys):
+    hive = Hive.init(remote_url, home)
+    svc = WorkspaceService(hive, MetaStore(hive.git), TokenAdapter())
+    r = _create(svc)
+    d = json.loads(svc.store.read(meta_path(r.id))) | {"ttl_s": -5}
+    _write(svc, r.id, json.dumps(d).encode())
+
+    # 회수 실패는 상태에 남는다 — 다음 drop 이 다시 시도한다
+    svc.adapter = RevokeFailsAdapter()
+    dropped = svc.drop(r.id)
+    assert dropped.state is WsState.DROPPED and dropped.token_id == "42"
+    assert svc.get(r.id).token_id == "42"
+    assert "not revoked" in capsys.readouterr().err
+
+
+# ── meta paths ───────────────────────────────────────────────
+BAD_PATH = "ws/a\nb.json"  # push 권한이 있으면 누구나 만들 수 있는 트리 이름
+
+
+def _forge_meta_entry(svc: WorkspaceService, name: str, subject: str) -> None:
+    """ws/ 아래에 이름이 이상한 블롭을 더한 meta 커밋을 push 한다(mktree -z 는 \\n 을 받는다)."""
+    git = svc.hive.git
+    tip = svc.store.tip()
+    files = git.ls_tree_recursive(tip) if tip else {}
+    ws_entries = {p.removeprefix("ws/"): oid for p, oid in files.items()}
+    ws_entries[name.removeprefix("ws/")] = git.hash_object(b"{}")
+    lines = "".join(f"100644 blob {oid}\t{n}\0" for n, oid in ws_entries.items())
+    ws_tree = git._out("mktree", "-z", data=lines.encode())
+    root = git._out("mktree", "-z", data=f"040000 tree {ws_tree}\tws\0".encode())
+    new = git.commit_tree(root, [tip] if tip else [], subject)
+    assert git.push(new, META_REF, expected=tip)
+
+
+def test_unexpected_meta_path_is_reported_not_read(remote_url: str, home: Path):
+    hive = Hive.init(remote_url, home)
+    svc = WorkspaceService(hive, MetaStore(hive.git), PlainAdapter())
+    good = _create(svc)
+    # 제목은 멀쩡한 이벤트로 위장한다 — 이벤트 로그(stats)도 그대로 읽힌다
+    _forge_meta_entry(svc, BAD_PATH, f"ws.created {good.id}")
+    assert BAD_PATH in svc.store.list("ws/")
+
+    # 읽지 않고 invalid 로 — list·gc·stats·doctor 가 트레이스백 없이 끝난다
+    records, invalid = svc.list_report(None)
+    assert [w.id for w in records] == [good.id]
+    assert invalid == [{"id": BAD_PATH, "detail": "unexpected meta path"}]
+    assert svc.gc()["invalid"] == invalid
+    assert summarize(svc)["invalid"] == 1
+    tokens = next(c for c in diagnose(remote_url, home)["checks"] if c["name"] == "tokens")
+    assert tokens["ok"] is True
+
+
+def test_events_rejects_subject_without_workspace_id(svc: WorkspaceService):
+    svc.store.apply(Change("ws/x.json", lambda _: b"{}", "ws.created ../../etc"))
+    with pytest.raises(InvalidState, match="unexpected subject"):
+        svc.events(None)
 
 
 # ── text fields ──────────────────────────────────────────────

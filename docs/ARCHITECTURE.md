@@ -322,7 +322,7 @@ fields kept, others defaulted, `created_at` set to now, `ttl_s = 0`.
 ## 7. Events
 
 The event log is the meta branch history. Commit subject: `<kind> <id>`.
-Kinds: `ws.created`, `ws.published`, `ws.dropped`, `ws.expired`
+Kinds: `ws.created`, `ws.published`, `ws.dropped`, `ws.expired`, `ws.revoked`
 (force-drop emits `ws.dropped`).
 
 - `gitswarm events tail [--since <oid>]` lists `{kind, id, oid, at, payload}`

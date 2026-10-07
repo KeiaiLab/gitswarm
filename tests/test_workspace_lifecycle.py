@@ -1,6 +1,7 @@
 # tests/test_workspace_lifecycle.py
 import json
 import multiprocessing as mp
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -425,6 +426,35 @@ def test_drop_survives_revoke_remote_error(remote_url: str, home: Path, capsys):
     assert working.revoked == ["42"] and svc.get(r.id).token_id is None
     assert summarize(svc)["unrevoked_tokens"] == 0
     assert svc.drop(r.id).token_id is None and working.revoked == ["42"]
+
+
+class RacingRevokeAdapter(TokenAdapter):
+    """revoke 하는 사이 다른 호스트의 재시도가 먼저 token_id 를 지웠다."""
+
+    def __init__(self, svc: WorkspaceService) -> None:
+        super().__init__()
+        self.svc = svc
+
+    def revoke_token(self, token_id: str) -> None:
+        super().revoke_token(token_id)
+        for ws in self.svc.list(WsState.DROPPED):
+            body = replace(ws, token_id=None).to_json()
+            self.svc.store.apply(
+                Change(meta_path(ws.id), lambda _, b=body: b, f"ws.revoked {ws.id}")
+            )
+
+
+def test_retry_revoke_writes_nothing_when_token_already_cleared(remote_url: str, home: Path):
+    hive = Hive.init(remote_url, home)
+    svc = WorkspaceService(hive, MetaStore(hive.git), RevokeFailsAdapter())
+    r = svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
+    svc.drop(r.id)
+
+    svc.adapter = RacingRevokeAdapter(svc)
+    tip = svc.store.tip()
+    assert svc.drop(r.id).token_id is None
+    # 경쟁자의 커밋 하나뿐 — 이 재시도는 아무것도 쓰지 않았다
+    assert [e.subject for e in svc.store.log(tip)] == [f"ws.revoked {r.id}"]
 
 
 def test_open_service_creates_missing_hive(remote_url: str, home: Path):

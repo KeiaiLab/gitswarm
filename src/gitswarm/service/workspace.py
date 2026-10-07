@@ -43,6 +43,8 @@ from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
 
 ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+RECORD_PATH_RE = re.compile(rf"{WS_DIR}/[0-9A-HJKMNP-TV-Z]{{26}}\.json")  # fullmatch 로만
+UNEXPECTED_PATH = "unexpected meta path"
 OID_RE = re.compile(r"^[0-9a-f]{40}$")
 
 EV_CREATED = "ws.created"
@@ -334,6 +336,10 @@ def _salvage(ws_id: str, prev: bytes | None, now: datetime) -> Workspace:
     )
 
 
+class _TokenGoneError(Exception):
+    """revoke 재시도 중 레코드의 token_id 가 이미 바뀌었다 — meta 에 아무것도 쓰지 않는다."""
+
+
 def unrevoked(records: list[Workspace]) -> list[str]:
     """회수에 실패한 토큰을 아직 들고 있는 dropped 레코드의 id."""
     return [w.id for w in records if w.state is WsState.DROPPED and w.token_id is not None]
@@ -397,7 +403,15 @@ class WorkspaceService:
 
         good: list[Workspace] = []
         invalid: list[dict] = []
-        paths = self.store.list_at(tip, f"{WS_DIR}/")
+
+        # 레코드 경로가 아닌 것(예: 이름에 줄바꿈)은 읽지 않고 보고만 한다 — push 권한이면 누구나 만든다
+        paths: list[str] = []
+        for path in self.store.list_at(tip, f"{WS_DIR}/"):
+            if RECORD_PATH_RE.fullmatch(path):
+                paths.append(path)
+                continue
+            invalid.append({"id": path, "detail": UNEXPECTED_PATH})
+
         blobs = self.store.read_many_at(tip, paths)  # 레코드 수와 무관하게 git 한 번
         for path in paths:
             ws_id = _path_id(path)
@@ -549,10 +563,16 @@ class WorkspaceService:
         if token_id is None or not self._revoke(token_id):
             return ws
 
+        # 그 사이 다른 재시도가 이미 지웠으면 쓸 것이 없다 — 변환을 멈추고 지금 레코드를 돌려준다
         def clear(cur: Workspace) -> Workspace:
-            return _revoked_if(cur, cur.token_id == token_id)
+            if cur.token_id != token_id:
+                raise _TokenGoneError
+            return replace(cur, token_id=None)
 
-        return self._transition(ws.id, EV_REVOKED, clear)
+        try:
+            return self._transition(ws.id, EV_REVOKED, clear)
+        except _TokenGoneError:
+            return self.get(ws.id)
 
     def _force_drop(self, ws_id: str) -> Workspace:
         """망가진 레코드의 회수. 지우는 브랜치는 id 로 재계산한 것뿐이다."""
@@ -717,6 +737,9 @@ class WorkspaceService:
             raise NotFound(f"invalid since oid: {since!r}")
 
         entries = [(e, *parse_subject(e.subject)) for e in self.store.log(since)]
+        for entry, _, ws_id in entries:
+            if not ULID_RE.fullmatch(ws_id):  # 제목이 경로를 정한다 — id 가 아니면 읽지 않는다
+                raise InvalidState(f"meta {entry.oid}: unexpected subject {entry.subject!r}")
         blobs = self.store.read_many([(e.oid, meta_path(ws_id)) for e, _, ws_id in entries])
 
         out = []

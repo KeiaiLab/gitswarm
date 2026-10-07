@@ -176,7 +176,7 @@ class RemoteAdapter(Protocol):
 ## 6. 이벤트
 
 - 이벤트 로그 = `git log refs/heads/gitswarm/meta`. 커밋 제목 고정 형식 `<종류> <id>`.
-  종류(A): `ws.created` · `ws.published` · `ws.dropped` · `ws.expired`.
+  종류(A): `ws.created` · `ws.published` · `ws.dropped` · `ws.expired` · `ws.revoked`(dropped 레코드의 토큰을 뒤늦게 회수).
 - `gitswarm events tail [--since <oid>]` → JSON lines `{kind, id, oid, at, payload}`.
 - 구독: `config.toml` `[[sink]]` — `kind = "webhook", url = …` 또는 `kind = "jsonl", path = …`.
   발행 시점 1회 전송, 재시도 없음. 놓친 쪽은 `--since` 로 되감는다(로그가 git 에 있어 손실 0).

@@ -7,7 +7,7 @@ import pytest
 
 from gitswarm.constants import peek_ref, tracking_ref
 from gitswarm.driver.git import Git
-from gitswarm.errors import RemoteError
+from gitswarm.errors import InvalidState, RemoteError
 from tests.conftest import count_network, git
 
 
@@ -44,7 +44,7 @@ def test_cat_files_batch(repo: Git):
 
 
 def test_cat_files_rejects_newline_rev(repo: Git):
-    with pytest.raises(ValueError, match="newline"):
+    with pytest.raises(InvalidState, match="newline"):
         repo.cat_files(["HEAD\nHEAD"])
 
 

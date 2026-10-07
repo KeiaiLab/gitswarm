@@ -151,7 +151,7 @@ def events_tail(remote: str | None = None, since: str | None = None) -> dict:
 @mcp.tool
 @payload
 def doctor(remote: str | None = None) -> dict:
-    """git 판본·GITSWARM_HOME·config·원격 도달·hive·ssh 다중화를 점검한다. Returns {ok, checks: [{name, ok, detail}], remote?} — ok=false 면 실패한 check 의 detail 을 본다. remote 를 못 찾으면 원격 검사는 생략."""
+    """git 판본·GITSWARM_HOME·config·원격 도달·hive·미회수 토큰(tokens)·ssh 다중화를 점검한다. Returns {ok, checks: [{name, ok, detail}], remote?} — ok=false 면 실패한 check 의 detail 을 본다. remote 를 못 찾으면 원격 검사는 생략."""
     return doctor_report(remote)
 
 

@@ -175,7 +175,7 @@ def events_tail(
 @app.command("doctor")
 @guarded
 def doctor(remote: RemoteOpt = None) -> None:
-    """git·홈·설정·원격·hive·ssh 다중화를 점검한다. 하나라도 실패면 종료코드 1."""
+    """git·홈·설정·원격·hive·미회수 토큰·ssh 다중화를 점검한다. 하나라도 실패면 종료코드 1."""
     report = doctor_report(remote)
     typer.echo(json.dumps(report, ensure_ascii=False))
     if not report["ok"]:
