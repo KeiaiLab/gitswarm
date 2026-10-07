@@ -20,7 +20,10 @@ from gitswarm.events import sinks_from_config
 from gitswarm.store.hive import REPO_DIR, Hive, hive_path
 from gitswarm.urls import is_ssh_url, validate_remote_url
 
-MIN_GIT = (2, 40, 0)
+# 쓰는 것(ls-remote --symref · merge-base --is-ancestor · cat-file --batch ·
+# push --force-with-lease · worktree · update-ref -d)은 2.39 에 다 있다.
+# tested on 2.39 (CI, Debian bookworm) and 2.55 (dev)
+GIT_MIN_VERSION = (2, 39, 0)
 GIT_VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 CREDENTIAL_ADAPTERS = frozenset({FORGEJO, GITHUB})
 
@@ -78,8 +81,8 @@ def _git() -> Check:
         return Check("git", False, e.detail)
 
     m = GIT_VERSION_RE.match(version)
-    need = ".".join(map(str, MIN_GIT))
-    if m is None or tuple(map(int, m.groups())) < MIN_GIT:
+    need = ".".join(map(str, GIT_MIN_VERSION))
+    if m is None or tuple(map(int, m.groups())) < GIT_MIN_VERSION:
         return Check("git", False, f"git {version}; need >= {need}")
     return Check("git", True, f"git {version}")
 

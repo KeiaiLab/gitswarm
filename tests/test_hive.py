@@ -179,7 +179,6 @@ def test_leftover_with_worktrees_is_not_removed(remote_url: str, home: Path):
 
 
 def test_stale_temp_dirs_are_swept(remote_url: str, home: Path):
-    import os
     import time
 
     from gitswarm.store.hive import STALE_TMP_S
@@ -236,7 +235,6 @@ SLOW_RENAME_S = 0.2
 
 def test_install_is_serialized_by_the_lock(remote_url: str, home: Path, monkeypatch):
     """재확인과 rename 사이를 늘린다 — 잠금이 없으면 진 스레드의 rename 이 실패한다."""
-    import os
     import time
     from concurrent.futures import ThreadPoolExecutor
 
@@ -253,27 +251,23 @@ def test_install_is_serialized_by_the_lock(remote_url: str, home: Path, monkeypa
     assert _hive_dirs(home) == [hive_id(remote_url)]
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
-def test_read_only_home_is_invalid_state(remote_url: str, home: Path):
+def _deny(*args, **kwargs):
+    raise PermissionError("read-only")
+
+
+@pytest.mark.parametrize(
+    "primitive",
+    [
+        "gitswarm.store.hive.Path.mkdir",
+        "gitswarm.store.hive.tempfile.mkdtemp",
+        "gitswarm.store.hive.os.rename",
+    ],
+    ids=["mkdir", "mkdtemp", "rename"],
+)
+def test_unwritable_home_is_invalid_state(remote_url: str, home: Path, monkeypatch, primitive):
+    """권한 비트 대신 쓰기 원시 연산을 막는다 — root(CI 파드)에서도 같은 길을 탄다."""
     from gitswarm.errors import InvalidState
 
-    home.chmod(0o500)
-    try:
-        with pytest.raises(InvalidState, match="cannot write hive home: PermissionError"):
-            Hive.init(remote_url, home)
-    finally:
-        home.chmod(0o700)
-
-
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
-def test_read_only_hives_dir_is_invalid_state(remote_url: str, home: Path):
-    from gitswarm.errors import InvalidState
-
-    hives = home / "hives"
-    hives.mkdir()
-    hives.chmod(0o500)
-    try:
-        with pytest.raises(InvalidState, match="cannot write hive home"):
-            Hive.init(remote_url, home)
-    finally:
-        hives.chmod(0o700)
+    monkeypatch.setattr(primitive, _deny)
+    with pytest.raises(InvalidState, match="cannot write hive home: PermissionError"):
+        Hive.init(remote_url, home)

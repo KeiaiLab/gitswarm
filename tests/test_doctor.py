@@ -60,7 +60,7 @@ def test_plain_adapter_needs_no_credential(home: Path):
     assert _check(diagnose(None, home), "config")["ok"] is True
 
 
-@pytest.mark.parametrize("version", ["2.39.9", "weird"])
+@pytest.mark.parametrize("version", ["2.38.5", "weird"])
 def test_old_or_odd_git_fails(home: Path, monkeypatch, version: str):
     monkeypatch.setattr(Git, "version", staticmethod(lambda: version))
     check = _check(diagnose(None, home), "git")
@@ -197,3 +197,12 @@ def test_ssh_mux_reads_the_hive_repo_config(home: Path, monkeypatch):
     git("config", "core.sshCommand", "ssh -i /k", cwd=repo.repo)
     check = _check(diagnose(SSH_URL, home), "ssh_mux")
     assert check["detail"] == "disabled: caller set core.sshCommand"
+
+
+def test_git_floor_admits_debian_bookworm(home: Path, monkeypatch):
+    """CI 파드(bookworm)는 git 2.39.5 다 — 하한이 그것을 막으면 doctor 가 거짓으로 붉다."""
+    from gitswarm.service.doctor import GIT_MIN_VERSION
+
+    assert GIT_MIN_VERSION <= (2, 39, 0)
+    monkeypatch.setattr(Git, "version", staticmethod(lambda: "2.39.5"))
+    assert _check(diagnose(None, home), "git")["ok"] is True
