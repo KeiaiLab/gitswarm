@@ -11,7 +11,7 @@ from gitswarm.constants import COMMIT_AUTHOR, COMMIT_EMAIL, tracking_ref
 from gitswarm.errors import RemoteError
 
 RC_LS_REMOTE_MISSING = 2
-REJECTED_MARKERS = ("[rejected]", "stale info", "failed to push some refs")
+REJECTED_MARKERS = ("[rejected]", "stale info")
 MISSING_REMOTE_REF_MARKERS = ("couldn't find remote ref", "remote ref does not exist")
 BLOB_MODE = "100644"
 TREE_MODE = "040000"
@@ -107,10 +107,14 @@ class Git:
 
     def push(self, oid: str, ref: str, expected: str | None) -> bool:
         """lease push. expected=None 은 "원격에 그 ref 가 없어야 한다"."""
-        # When expected=None, check if remote ref exists before attempting push.
-        # If it exists, the lease is violated (ref should not exist).
-        if expected is None and self.ls_remote(ref) is not None:
-            return False
+        # Pre-check: if remote already holds oid and that differs from expected,
+        # reject immediately. This handles the case where git's "up-to-date" exit
+        # would short-circuit the lease check.
+        remote_oid = self.ls_remote(ref)
+        if remote_oid == oid:
+            expect_val = NULL_OID if expected is None else expected
+            if remote_oid != expect_val:
+                return False
         expect_val = NULL_OID if expected is None else expected
         lease = f"--force-with-lease={ref}:{expect_val}"
         p = self._run("push", "-q", "origin", lease, f"{oid}:{ref}", ok_rc=(0, 1))
@@ -194,7 +198,7 @@ class Git:
         rng = f"{since}..{ref}" if since else ref
         out = self._run("log", "--format=%H%x00%s%x00%cI", rng).stdout.decode()
         entries = []
-        for line in filter(None, out.splitlines()):
+        for line in filter(None, out.split("\n")):
             oid, subject, at = line.split(NUL)
             entries.append(LogEntry(oid, subject, at))
         return entries

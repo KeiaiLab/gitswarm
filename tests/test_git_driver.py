@@ -51,6 +51,39 @@ def test_push_lease_create_then_reject(repo: Git):
     assert repo.rev_parse(tracking_ref("refs/heads/gitswarm/meta")) == base
 
 
+def test_push_lease_wrong_expected_with_different_oid(repo: Git):
+    # (a) remote at A, push B with expected=<wrong oid> → False
+    tree = repo.build_tree({})
+    new_oid = repo.commit_tree(tree, [], "new")
+    # Push new_oid to create the ref
+    assert repo.push(new_oid, "refs/heads/gitswarm/test_a", expected=None) is True
+    # Try to push it again with wrong expected (anything other than new_oid) → False
+    wrong_oid = repo.fetch("refs/heads/main")
+    assert repo.push(new_oid, "refs/heads/gitswarm/test_a", expected=wrong_oid) is False
+
+
+def test_push_lease_new_oid_with_none_expected(repo: Git):
+    # (b) remote at A, push B with expected=None → False (stale info)
+    tree = repo.build_tree({})
+    new_oid = repo.commit_tree(tree, [], "new")
+    # Push new_oid to create the ref
+    assert repo.push(new_oid, "refs/heads/gitswarm/test_b", expected=None) is True
+    # Try to push a different oid with expected=None → False (stale info)
+    newer_oid = repo.commit_tree(tree, [], "newer")
+    assert repo.push(newer_oid, "refs/heads/gitswarm/test_b", expected=None) is False
+
+
+def test_push_lease_same_oid_with_wrong_expected(repo: Git):
+    # (c) remote at A, push A with expected=<wrong oid> → False
+    tree = repo.build_tree({})
+    oid = repo.commit_tree(tree, [], "commit")
+    # Push oid to create the ref
+    assert repo.push(oid, "refs/heads/gitswarm/test_c", expected=None) is True
+    # Try to push the same oid with wrong expected (pre-check should catch it) → False
+    wrong_oid = repo.fetch("refs/heads/main")
+    assert repo.push(oid, "refs/heads/gitswarm/test_c", expected=wrong_oid) is False
+
+
 def test_delete_remote_is_idempotent(repo: Git):
     base = repo.fetch("refs/heads/main")
     repo.push(base, "refs/heads/gitswarm/ws/a", expected=None)
