@@ -34,6 +34,19 @@ def test_apply_creates_orphan_then_appends(store: MetaStore):
     assert store.read_at(c3, "ws/b.json") == b"{}"
 
 
+def test_read_many_at(store: MetaStore):
+    c1 = store.apply(Change("ws/a.json", lambda _: b"A", "ws.created a"))
+    c2 = store.apply(Change("ws/b.json", lambda _: b"B", "ws.created b"))
+    assert store.read_many_at(c2, ["ws/a.json", "ws/b.json", "ws/x.json"]) == {
+        "ws/a.json": b"A",
+        "ws/b.json": b"B",
+    }
+    assert store.read_many([(c1, "ws/a.json"), (c1, "ws/b.json"), (c2, "ws/b.json")]) == {
+        (c1, "ws/a.json"): b"A",
+        (c2, "ws/b.json"): b"B",
+    }
+
+
 def _writer(remote_url: str, home: str, name: str) -> None:
     hive = Hive.open(remote_url, Path(home))
     MetaStore(hive.git).apply(

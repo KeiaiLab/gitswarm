@@ -51,6 +51,16 @@ class MetaStore:
             return None
         return self.git.cat_file(rev)
 
+    def read_many_at(self, tip: str, paths: list[str]) -> dict[str, bytes]:
+        """한 tip 의 여러 경로를 git 프로세스 하나로. 없는 경로는 빠진다."""
+        got = self.read_many([(tip, path) for path in paths])
+        return {path: data for (_, path), data in got.items()}
+
+    def read_many(self, spots: list[tuple[str, str]]) -> dict[tuple[str, str], bytes]:
+        """(commit oid, 경로) 여러 개를 git 프로세스 하나로 — 이벤트마다 다른 커밋을 읽을 때."""
+        revs = {f"{oid}:{path}": (oid, path) for oid, path in spots}
+        return {revs[rev]: data for rev, data in self.git.cat_files(list(revs)).items()}
+
     def list(self, prefix: str) -> list[str]:
         tip = self.tip()
         if tip is None:

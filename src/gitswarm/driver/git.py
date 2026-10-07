@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -78,6 +79,10 @@ SSH_CONTROL_SOCKET = "mux"
 SSH_CONTROL_PERSIST_S = 60
 SOCKET_PATH_MAX = 104  # sun_path 바이트 한도(macOS 104 · Linux 108 중 작은 쪽)
 MASTER_TEMP_SUFFIX = 17  # ssh 는 마스터 소켓을 "<path>.<16자>" 로 만든 뒤 옮긴다
+
+# cat-file --batch 의 찾은 객체 헤더: "<oid> <type> <size>". 못 찾으면 "<rev> missing" 따위.
+BATCH_HEADER_RE = re.compile(rb"([0-9a-f]{40,64}) ([a-z]+) ([0-9]+)")
+BLOB = "blob"
 
 BLOB_MODE = "100644"
 TREE_MODE = "040000"
@@ -356,6 +361,35 @@ class Git:
 
     def cat_file(self, rev: str) -> bytes:
         return self._run("cat-file", "blob", rev).stdout
+
+    def cat_files(self, revs: list[str]) -> dict[str, bytes]:
+        """여러 rev 의 블롭 내용을 프로세스 하나로. 없는 rev·블롭 아닌 객체는 빠진다.
+
+        stdin  : "<rev>\\n" × N
+        stdout : "<oid> <type> <size>\\n<data>\\n"  또는  "<rev> missing\\n"  (요청 순서대로)
+        """
+        if not revs:
+            return {}
+        if any("\n" in rev for rev in revs):
+            raise ValueError("rev contains a newline")
+
+        data = "".join(f"{rev}\n" for rev in revs).encode()
+        out = self._run("cat-file", "--batch", data=data).stdout
+        found: dict[str, bytes] = {}
+        pos = 0
+        for rev in revs:
+            end = out.index(b"\n", pos)
+            m = BATCH_HEADER_RE.fullmatch(out[pos:end])
+            pos = end + 1
+            if m is None:  # missing · ambiguous — 내용 없이 헤더 한 줄
+                continue
+
+            # 내용은 길이로 자른다 — 블롭 안의 줄바꿈·헤더 모양을 믿지 않는다
+            size = int(m.group(3))
+            if m.group(2).decode() == BLOB:
+                found[rev] = out[pos : pos + size]
+            pos += size + 1
+        return found
 
     def ls_tree(self, tree_ish: str) -> list[TreeEntry]:
         out = self._run("ls-tree", "-z", tree_ish).stdout.decode()

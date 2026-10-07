@@ -164,7 +164,7 @@ def test_list_report_fails_when_listed_blob_vanishes(
     svc: WorkspaceService, monkeypatch: pytest.MonkeyPatch
 ):
     _create(svc)
-    monkeypatch.setattr(MetaStore, "read_at", lambda *a, **k: None)
+    monkeypatch.setattr(MetaStore, "read_many_at", lambda *a, **k: {})
     with pytest.raises(InvalidState, match="unreadable"):
         svc.list_report(None)
 

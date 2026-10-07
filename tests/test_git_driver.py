@@ -30,6 +30,24 @@ def test_ls_remote(repo: Git):
     assert repo.ls_remote("refs/heads/nope") is None
 
 
+def test_cat_files_batch(repo: Git):
+    binary = bytes(range(256)) + b"\n\n0 blob 3\n"  # 헤더처럼 보이는 줄·NUL·끝 줄바꿈
+    a = repo.hash_object(binary)
+    empty = repo.hash_object(b"")
+    tree = repo.build_tree({"a b.bin": a, "e": empty})
+    commit = repo.commit_tree(tree, [], "c")
+    revs = [f"{commit}:a b.bin", f"{commit}:missing", f"{commit}:e", "0" * 40, tree]
+
+    # 없는 것·블롭 아닌 것(트리)은 빠진다
+    assert repo.cat_files(revs) == {f"{commit}:a b.bin": binary, f"{commit}:e": b""}
+    assert repo.cat_files([]) == {}
+
+
+def test_cat_files_rejects_newline_rev(repo: Git):
+    with pytest.raises(ValueError, match="newline"):
+        repo.cat_files(["HEAD\nHEAD"])
+
+
 def test_blob_tree_commit_roundtrip(repo: Git):
     a = repo.hash_object(b"A")
     b = repo.hash_object(b"B")

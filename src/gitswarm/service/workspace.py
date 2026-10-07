@@ -397,9 +397,11 @@ class WorkspaceService:
 
         good: list[Workspace] = []
         invalid: list[dict] = []
-        for path in self.store.list_at(tip, f"{WS_DIR}/"):
+        paths = self.store.list_at(tip, f"{WS_DIR}/")
+        blobs = self.store.read_many_at(tip, paths)  # 레코드 수와 무관하게 git 한 번
+        for path in paths:
             ws_id = _path_id(path)
-            data = self.store.read_at(tip, path)
+            data = blobs.get(path)
             if data is None:
                 raise InvalidState(f"meta {tip}: listed {path} is unreadable")
             try:
@@ -714,10 +716,12 @@ class WorkspaceService:
         if since is not None and not OID_RE.fullmatch(since):
             raise NotFound(f"invalid since oid: {since!r}")
 
+        entries = [(e, *parse_subject(e.subject)) for e in self.store.log(since)]
+        blobs = self.store.read_many([(e.oid, meta_path(ws_id)) for e, _, ws_id in entries])
+
         out = []
-        for entry in self.store.log(since):
-            kind, ws_id = parse_subject(entry.subject)
-            raw = self.store.read_at(entry.oid, meta_path(ws_id))
+        for entry, kind, ws_id in entries:
+            raw = blobs.get((entry.oid, meta_path(ws_id)))
             if raw is None:  # 커밋은 그 레코드를 썼다고 말한다 — 없으면 meta 가 위조됐다
                 raise InvalidState(f"meta {entry.oid}: missing {meta_path(ws_id)}")
             try:

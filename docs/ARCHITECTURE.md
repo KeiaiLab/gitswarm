@@ -257,6 +257,11 @@ Network calls per operation (one `fetch`, `push` or delete each):
 | `read`, `tree` | 2 |
 | `get`, `list`, `events tail`, `gc` | 1 |
 
+Local git processes do not grow with the record count either: `list` and
+`events tail` read every record with one `git cat-file --batch`
+(`Git.cat_files`, `MetaStore.read_many_at`/`read_many`), so 100 records
+cost 4 processes (meta fetch + rev-parse, ls-tree or log, the batch).
+
 `scripts/bench.py <remote-url>` measures this against a real remote: it
 counts ssh invocations and new handshakes per command over repeated
 create-to-drop cycles and exits 1 when a command exceeds its budget
