@@ -565,9 +565,16 @@ class WorkspaceService:
         oid = self.store.apply(Change(meta_path(ws_id), transform, f"{kind} {ws_id}"))
         ws = built[-1]
 
+        # 기록은 이미 원격에 있다 — sink 오류를 올리면 호출자가 재시도해 중복을 만든다
         ev = Event(kind=kind, id=ws.id, oid=oid, at=_iso(self.clock()), payload=ws.to_dict())
         for sink in self.sinks:
-            sink.emit(ev)
+            try:
+                sink.emit(ev)
+            except Exception as e:
+                print(
+                    f"gitswarm: sink {type(sink).__name__} failed: {type(e).__name__}",
+                    file=sys.stderr,
+                )
         return ws
 
     def _transition(

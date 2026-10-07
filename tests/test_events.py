@@ -87,3 +87,34 @@ def test_jsonl_sink_creates_parent_dir(tmp_path: Path):
     path = tmp_path / "new" / "dir" / "e.jsonl"
     JsonlSink(path).emit(Event("k", "i", "o", "t", {}))
     assert path.exists()
+
+
+class _Boom:
+    def emit(self, event: Event) -> None:
+        raise RuntimeError("sink down")
+
+
+def _blocked_jsonl(tmp_path: Path) -> JsonlSink:
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("")
+    return JsonlSink(blocker / "e.jsonl")
+
+
+@pytest.mark.parametrize(
+    "make_sink",
+    [
+        lambda tmp: _Boom(),
+        _blocked_jsonl,
+        lambda tmp: WebhookSink("http://ex\nample/"),  # httpx.InvalidURL
+        lambda tmp: WebhookSink("http://xn--/"),  # idna ValueError
+    ],
+)
+def test_sink_failure_does_not_fail_commit(
+    remote_url: str, home: Path, tmp_path: Path, capsys, make_sink
+):
+    svc = _svc(remote_url, home, [make_sink(tmp_path)])
+    r = svc.create("main", {}, 0, None, Checkout.NONE, {})
+    # 기록은 이미 원격에 있다 — sink 오류가 재시도(=중복 workspace)를 부르지 않는다
+    assert svc.get(r.id).id == r.id
+    err = capsys.readouterr().err.strip().splitlines()
+    assert len(err) == 1 and err[0].startswith("gitswarm: ")
