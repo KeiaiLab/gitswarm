@@ -15,8 +15,9 @@ account. Create an account that exists only for this:
 - no admin rights, no other memberships.
 
 The scope to one repository comes from the `repositories` field of the
-token request. Use a Forgejo version that supports repository-scoped
-tokens; gitswarm does not check that the server honoured the field.
+token request, sent as `[{"owner": …, "name": …}]` (the shape Forgejo 16
+accepts). Use a Forgejo version that supports repository-scoped tokens;
+gitswarm does not check that the server honoured the field.
 
 ## 2. The credential file
 

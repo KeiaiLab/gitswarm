@@ -32,8 +32,9 @@ First release: sub-project A, Workspace.
   only commits this host has seen and reports the rest as `conflicted`.
   Broken records are reported as `invalid`, not fatal.
 - Adapters: plain git; Forgejo (repository-scoped PAT per workspace,
-  revoked on drop, retried and counted when revocation fails); GitHub
-  (App installation token).
+  `repositories: [{owner, name}]` as Forgejo 16 expects, revoked on drop,
+  retried and counted when revocation fails); GitHub (App installation
+  token).
 - Event sinks: JSONL file and webhook, sent once; `events tail --since`
   replays from git.
 - SSH connection multiplexing per hive (ControlMaster, 60 s persist) and
@@ -57,6 +58,13 @@ First release: sub-project A, Workspace.
   logged; errors carry the operation and status only.
 - `hive.toml` is escaped on write and validated on read; hive creation is
   atomic (temp dir, locked rename).
+- The GitHub App credential file must hold an RSA private key; anything
+  else is refused before use.
+- CI removes its clone token from `.git/config` before the test suite runs
+  pull-request code.
+- Authorization boundary: a workspace is not bound to its creator; the
+  remote's push ACL on `refs/heads/gitswarm/*` is the boundary. See
+  [SECURITY.md](https://github.com/KeiaiLab/gitswarm/blob/stable/SECURITY.md).
 - Transfers stall-bounded (HTTP low-speed limit, SSH keepalive); `ls-remote`
   probes time out after 60 s.
 
@@ -68,6 +76,13 @@ First release: sub-project A, Workspace.
   are not refreshed.
 - Event sinks have no retry and no signature.
 - `ws publish` records the remote tip without an ancestry check.
+- `ws gc` never reclaims published workspaces or open ones another host
+  pushed to (reported as `conflicted`); they need `ws drop`.
+- Forgejo repository scoping depends on the server honouring the
+  `repositories` field; gitswarm does not verify the issued token's scope.
+- CI that runs on every push must ignore `gitswarm/**` branches, or each
+  workspace and meta write starts a run.
+- `uv.lock` is not committed; dependency versions resolve at install time.
 - POSIX only (uses `fcntl`). git >= 2.39, Python >= 3.11.
 - Not yet on PyPI; install from git.
 - B (Intent) and C (Landing) are not implemented.
