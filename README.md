@@ -45,6 +45,7 @@ worktree 없이 브랜치만 받은 에이전트는 평범한 git 으로 일한�
     gitswarm ws publish 01J…   # records the remote tip as published
 
 push 만으로는 gitswarm 이 끝난 줄 모른다 — 마지막에 `ws publish` 로 원격 tip 을 발행 결과(`published_oid`)로 기록한다.
+publish 는 조상 검사를 하지 않고 브랜치 tip 을 그대로 기록한다(force-push 된 이력도). tip 이 base 그대로면 InvalidState.
 
 ## 설정 `~/.gitswarm/config.toml`
 

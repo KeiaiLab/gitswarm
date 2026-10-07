@@ -368,3 +368,37 @@ def test_drop_on_fresh_host_follows_peeked_tip(remote_url: str, home: Path, tmp_
     assert svc_b.drop(r.id).state is WsState.DROPPED
     assert svc_b.hive.git.ls_remote(r.branch) is None
     assert svc_b.get(r.id).state is WsState.DROPPED
+
+
+def test_publish_from_worktree_at_base_is_invalid(svc: WorkspaceService):
+    r = svc.create("main", {}, 0, None, Checkout.WORKTREE, {})
+    with pytest.raises(InvalidState, match="nothing published: branch is still at base"):
+        svc.publish(r.id)
+    assert svc.get(r.id).state is WsState.OPEN
+    assert svc.hive.git.rev_parse(lease_ref(r.branch)) == r.base_oid
+
+
+def test_publish_without_worktree_leaves_local_refs(svc: WorkspaceService, tmp_path: Path):
+    r = svc.create("main", {}, 0, None, Checkout.NONE, {})
+    git_ = svc.hive.git
+    before = (git_.rev_parse(lease_ref(r.branch)), git_.rev_parse(tracking_ref(r.branch)))
+    _push_more(svc, r.branch, tmp_path, "theirs.txt")
+    svc.publish(r.id)
+    after = (git_.rev_parse(lease_ref(r.branch)), git_.rev_parse(tracking_ref(r.branch)))
+    assert after == before
+
+
+def test_publish_without_worktree_when_dropped_is_invalid(svc: WorkspaceService):
+    r = svc.create("main", {}, 0, None, Checkout.NONE, {})
+    svc.drop(r.id)
+    with pytest.raises(InvalidState, match="dropped → published"):
+        svc.publish(r.id)
+
+
+def test_drop_keeps_published_oid(svc: WorkspaceService, tmp_path: Path):
+    r = svc.create("main", {}, 0, None, Checkout.NONE, {})
+    tip = _push_more(svc, r.branch, tmp_path, "theirs.txt")
+    svc.publish(r.id)
+    dropped = svc.drop(r.id)
+    assert dropped.state is WsState.DROPPED and dropped.published_oid == tip
+    assert svc.get(r.id).published_oid == tip

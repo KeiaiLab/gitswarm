@@ -40,8 +40,8 @@ def test_lifecycle_via_cli(inited: str):
         remote=inited,
     )
     assert code == 0 and out["ok"] is True
-    ws_id = out["id"]
-    assert (Path(out["path"]) / "README.md").exists()
+    ws_id, wt = out["id"], Path(out["path"])
+    assert (wt / "README.md").exists()
 
     code, out = run("ws", "get", ws_id, remote=inited)
     assert code == 0 and out["state"] == "open" and out["agent"] == {"name": "impl"}
@@ -52,6 +52,9 @@ def test_lifecycle_via_cli(inited: str):
     code, out = run("ws", "tree", ws_id, remote=inited)
     assert code == 0 and [e["name"] for e in out["entries"]] == ["README.md"]
 
+    (wt / "n.txt").write_text("n\n")
+    git("add", "n.txt", cwd=wt)
+    git("commit", "-q", "-m", "n", cwd=wt)
     code, out = run("ws", "publish", ws_id, remote=inited)
     assert code == 0 and len(out["oid"]) == 40
 

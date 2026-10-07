@@ -8,6 +8,12 @@ from gitswarm.surfaces.mcp import mcp
 from tests.conftest import git
 
 
+def commit(wt: Path) -> None:
+    (wt / "n.txt").write_text("n\n")
+    git("add", "n.txt", cwd=wt)
+    git("commit", "-q", "-m", "n", cwd=wt)
+
+
 def call(name: str, **args):
     async def go():
         async with Client(mcp) as c:
@@ -47,6 +53,7 @@ def test_lifecycle_via_mcp(remote_url: str, home: Path):
     assert got["state"] == "open"
     rd = call("workspace_read_file", remote=remote_url, ws_id=r["id"], path="README.md")
     assert rd["content"] == "seed\n"
+    commit(Path(r["path"]))
     assert call("workspace_publish", remote=remote_url, ws_id=r["id"])["ok"] is True
     assert call("workspace_drop", remote=remote_url, ws_id=r["id"])["state"] == "dropped"
 
@@ -65,6 +72,7 @@ def test_list_filters_and_rejects_bad_state(remote_url: str, home: Path):
     call("hive_init", url=remote_url)
     a = _create(remote_url, checkout=True)
     b = _create(remote_url)
+    commit(Path(a["path"]))
     call("workspace_publish", remote=remote_url, ws_id=a["id"])
     got = call("workspace_list", remote=remote_url, state="published")
     assert [w["id"] for w in got["workspaces"]] == [a["id"]] and got["invalid"] == []
@@ -113,6 +121,7 @@ def test_create_records_agent_labels_parent(remote_url: str, home: Path):
 def test_publish_returns_full_oid(remote_url: str, home: Path):
     call("hive_init", url=remote_url)
     r = _create(remote_url, checkout=True)
+    commit(Path(r["path"]))
     assert len(call("workspace_publish", remote=remote_url, ws_id=r["id"])["oid"]) == 40
 
 
