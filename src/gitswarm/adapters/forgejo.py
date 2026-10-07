@@ -10,7 +10,8 @@ import httpx
 
 from gitswarm.adapters.remote import Capability, Scope, Token
 from gitswarm.config import RemoteSpec
-from gitswarm.errors import RemoteError, Unsupported
+from gitswarm.constants import TOKEN_ID_RE
+from gitswarm.errors import InvalidState, RemoteError, Unsupported
 
 TOKEN_NAME_PREFIX = "gitswarm-"
 SCOPE_NAMES: dict[Scope, str] = {Scope.READ: "read:repository", Scope.WRITE: "write:repository"}
@@ -34,13 +35,17 @@ class ForgejoAdapter:
     def capabilities(self) -> frozenset[Capability]:
         return frozenset({Capability.TOKEN})
 
-    def _send(self, method: str, url: str, **kw: object) -> httpx.Response:
-        # 주입된 client 는 호출자 소유라 닫지 않는다. 직접 만든 것만 닫는다.
-        if self.client is not None:
-            return self.client.request(method, url, **kw)
+    def _send(self, op: str, method: str, url: str, **kw: object) -> httpx.Response:
+        # 매 요청에 자격을 싣는다(주입 client 에 auth 가 없어도 동일). 주입 client 는 닫지 않는다.
         auth = (self.user, self.credential)
-        with httpx.Client(auth=auth, timeout=TIMEOUT_S) as http:
-            return http.request(method, url, **kw)
+        try:
+            if self.client is not None:
+                return self.client.request(method, url, auth=auth, **kw)
+            with httpx.Client(timeout=TIMEOUT_S) as http:
+                return http.request(method, url, auth=auth, **kw)
+        except httpx.HTTPError as e:
+            # 메시지에 URL·자격을 싣지 않는다: 실패 계열 이름만.
+            raise RemoteError(f"forgejo {op} failed: {type(e).__name__}") from None
 
     def _tokens_url(self) -> str:
         return f"{self.api}/api/v1/users/{self.user}/tokens"
@@ -51,14 +56,19 @@ class ForgejoAdapter:
             "scopes": [SCOPE_NAMES[scope]],
             "repositories": [repo],
         }
-        r = self._send("POST", self._tokens_url(), json=body)
+        r = self._send("token issue", "POST", self._tokens_url(), json=body)
         if r.status_code != HTTPStatus.CREATED:
             raise RemoteError(f"forgejo token issue failed: HTTP {r.status_code}")
-        j = r.json()
-        return Token(id=str(j["id"]), secret=j["sha1"], scope=scope)
+        try:
+            j = r.json()
+            return Token(id=str(j["id"]), secret=j["sha1"], scope=scope)
+        except (KeyError, TypeError, ValueError):
+            raise RemoteError("forgejo token issue failed: malformed response") from None
 
     def revoke_token(self, token_id: str) -> None:
-        r = self._send("DELETE", f"{self._tokens_url()}/{token_id}")
+        if not TOKEN_ID_RE.fullmatch(token_id):
+            raise InvalidState(f"invalid token id {token_id!r}")
+        r = self._send("token revoke", "DELETE", f"{self._tokens_url()}/{token_id}")
         if r.status_code in (HTTPStatus.NO_CONTENT, HTTPStatus.NOT_FOUND):
             return
         raise RemoteError(f"forgejo token revoke failed: HTTP {r.status_code}")

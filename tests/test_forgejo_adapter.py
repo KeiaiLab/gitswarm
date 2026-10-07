@@ -1,3 +1,4 @@
+import base64
 import json
 from http import HTTPStatus
 from pathlib import Path
@@ -10,7 +11,7 @@ from gitswarm.adapters.forgejo import ForgejoAdapter
 from gitswarm.adapters.remote import Capability, Scope
 from gitswarm.adapters.select import adapter_for
 from gitswarm.config import Config, RemoteSpec
-from gitswarm.errors import RemoteError, Unsupported
+from gitswarm.errors import InvalidState, RemoteError, Unsupported
 
 API = "https://git.example.com"
 
@@ -80,3 +81,42 @@ def test_adapter_for_picks_forgejo(tmp_path: Path):
     cred.write_text("abc")
     cfg = Config(remotes={"git.example.com": RemoteSpec("forgejo", API, "bot", str(cred))})
     assert isinstance(adapter_for("ssh://git@git.example.com/o/r.git", cfg), ForgejoAdapter)
+
+
+@respx.mock
+def test_injected_client_still_carries_credential():
+    route = respx.post(f"{API}/api/v1/users/bot/tokens").mock(
+        return_value=httpx.Response(HTTPStatus.CREATED, json={"id": 1, "sha1": "t"})
+    )
+    with httpx.Client() as c:
+        ForgejoAdapter(api=API, user="bot", credential="s3cret", client=c).issue_token(
+            "o/r", "01J", Scope.READ
+        )
+        assert not c.is_closed
+    expect = "Basic " + base64.b64encode(b"bot:s3cret").decode()
+    assert route.calls[0].request.headers["authorization"] == expect
+
+
+@respx.mock
+def test_network_error_becomes_remote_error(adapter: ForgejoAdapter):
+    respx.post(f"{API}/api/v1/users/bot/tokens").mock(side_effect=httpx.ConnectError("x"))
+    with pytest.raises(RemoteError, match="ConnectError") as ei:
+        adapter.issue_token("o/r", "01J", Scope.READ)
+    assert "s3cret" not in str(ei.value)
+
+
+@respx.mock
+def test_malformed_created_body_is_remote_error(adapter: ForgejoAdapter):
+    respx.post(f"{API}/api/v1/users/bot/tokens").mock(
+        return_value=httpx.Response(HTTPStatus.CREATED, json={})
+    )
+    with pytest.raises(RemoteError):
+        adapter.issue_token("o/r", "01J", Scope.READ)
+
+
+@respx.mock
+def test_revoke_rejects_path_like_token_id(adapter: ForgejoAdapter):
+    route = respx.route().mock(return_value=httpx.Response(HTTPStatus.NO_CONTENT))
+    with pytest.raises(InvalidState):
+        adapter.revoke_token("../../admin/users/x")
+    assert not route.called

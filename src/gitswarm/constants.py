@@ -1,5 +1,7 @@
 """레포 전체가 공유하는 이름·상한. 매직 값은 여기에만 둔다."""
 
+import re
+
 REF_PREFIX = "gitswarm/"
 HEADS = "refs/heads/"
 TRACKING = "refs/remotes/origin/"
@@ -12,6 +14,7 @@ META_CAS_RETRIES = 5
 DEFAULT_TTL_S = 7200
 TTL_FOREVER = 0
 ULID_LEN = 26
+TOKEN_ID_RE = re.compile(r"[0-9]+")  # 원격 PAT id: URL 경로에 들어가므로 숫자만
 
 COMMIT_AUTHOR = "gitswarm"
 COMMIT_EMAIL = "gitswarm@localhost"

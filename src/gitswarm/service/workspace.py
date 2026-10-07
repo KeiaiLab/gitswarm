@@ -22,6 +22,7 @@ from gitswarm.adapters.select import adapter_for, repo_name
 from gitswarm.config import load_config
 from gitswarm.constants import (
     HEADS,
+    TOKEN_ID_RE,
     TTL_FOREVER,
     meta_path,
     peek_ref,
@@ -124,6 +125,8 @@ class Workspace:
             )
         if ws.parent is not None:
             _check_id(ws.parent)
+        if ws.token_id is not None and not TOKEN_ID_RE.fullmatch(ws.token_id):
+            raise InvalidState(f"{ws.id}: invalid token id {ws.token_id!r}")
         _check_expiry(ws)
         return ws
 

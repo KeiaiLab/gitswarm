@@ -116,7 +116,7 @@ class TokenAdapter:
 
     def issue_token(self, repo: str, ws_id: str, scope: Scope) -> Token:
         self.issued.append((repo, ws_id, scope))
-        return Token("tid", "secret", scope)
+        return Token("42", "secret", scope)
 
     def revoke_token(self, token_id: str) -> None:
         self.revoked.append(token_id)
@@ -128,10 +128,10 @@ def test_token_issued_persisted_and_revoked(remote_url: str, home: Path):
     svc = WorkspaceService(hive, MetaStore(hive.git), adapter)
     r = svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
     assert r.token == "secret"
-    assert svc.get(r.id).token_id == "tid"
+    assert svc.get(r.id).token_id == "42"
     assert adapter.issued == [(repo_name(hive.url), r.id, Scope.WRITE)]
     svc.drop(r.id)
-    assert adapter.revoked == ["tid"]
+    assert adapter.revoked == ["42"]
 
 
 def test_branch_push_rejected_writes_nothing(svc: WorkspaceService, monkeypatch):
@@ -169,6 +169,20 @@ def test_forged_branch_fails_closed(svc: WorkspaceService):
         svc.get(FORGED_ID)
     with pytest.raises(InvalidState):
         svc.list(None)
+
+
+def test_forged_token_id_fails_closed(svc: WorkspaceService):
+    body = Workspace(
+        id=FORGED_ID,
+        state=WsState.OPEN,
+        base_ref="refs/heads/main",
+        base_oid="0" * 40,
+        branch=ws_ref(FORGED_ID),
+        token_id="../x",
+    ).to_json()
+    svc.store.apply(Change(meta_path(FORGED_ID), body, f"ws.created {FORGED_ID}"))
+    with pytest.raises(InvalidState):
+        svc.get(FORGED_ID)
 
 
 def test_from_json_ignores_unknown_keys():
