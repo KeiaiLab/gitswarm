@@ -9,7 +9,7 @@ from gitswarm.adapters.plain import PlainAdapter
 from gitswarm.adapters.remote import Capability, Scope, Token
 from gitswarm.adapters.select import repo_name
 from gitswarm.constants import META_REF, lease_ref, meta_path, tracking_ref, ws_ref
-from gitswarm.errors import Conflict, InvalidState, NotFound
+from gitswarm.errors import Conflict, InvalidState, NotFound, RemoteError
 from gitswarm.service.workspace import (
     ULID_RE,
     Checkout,
@@ -385,6 +385,25 @@ def test_drop_revokes_even_without_token_capability(remote_url: str, home: Path,
     assert svc.drop(b.id).state is WsState.DROPPED
     err = capsys.readouterr().err.strip().splitlines()
     assert len(err) == 1 and "not revoked" in err[0]
+
+
+class RevokeFailsAdapter(TokenAdapter):
+    """원격이 revoke 를 거절한다(만료된 관리 토큰·5xx)."""
+
+    def revoke_token(self, token_id: str) -> None:
+        raise RemoteError("HTTP 500\nfrom forge")
+
+
+def test_drop_survives_revoke_remote_error(remote_url: str, home: Path, capsys):
+    hive = Hive.init(remote_url, home)
+    svc = WorkspaceService(hive, MetaStore(hive.git), RevokeFailsAdapter())
+    r = svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
+
+    # 브랜치는 이미 지웠다 — revoke 실패가 기록을 open 에 묶어 두지 않는다
+    assert svc.drop(r.id).state is WsState.DROPPED
+    assert svc.get(r.id).state is WsState.DROPPED
+    err = capsys.readouterr().err.strip().splitlines()
+    assert len(err) == 1 and err[0].startswith("gitswarm: token 42 not revoked")
 
 
 def test_open_service_creates_missing_hive(remote_url: str, home: Path):

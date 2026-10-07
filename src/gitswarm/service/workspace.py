@@ -37,7 +37,7 @@ from gitswarm.constants import (
     ws_ref,
 )
 from gitswarm.driver.git import Git
-from gitswarm.errors import Conflict, InvalidState, NotFound, Unsupported
+from gitswarm.errors import Conflict, InvalidState, NotFound, RemoteError, Unsupported
 from gitswarm.events import Event, Sink, parse_subject, sinks_from_config
 from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
@@ -591,11 +591,15 @@ class WorkspaceService:
                 self.hive.git.delete_ref(ref)
 
     def _revoke(self, token_id: str) -> None:
-        """기록된 토큰은 항상 회수를 시도한다 — 어댑터 설정이 바뀌어도 토큰은 원격에 살아 있다."""
+        """기록된 토큰은 항상 회수를 시도한다 — 어댑터 설정이 바뀌어도 토큰은 원격에 살아 있다.
+
+        실패는 한 줄로 남기고 넘어간다 — 브랜치는 이미 지웠으니 기록은 dropped 로 가야 한다.
+        """
         try:
             self.adapter.revoke_token(token_id)
-        except Unsupported as e:
-            print(f"gitswarm: token {token_id} not revoked: {e.detail}", file=sys.stderr)
+        except (Unsupported, RemoteError) as e:
+            reason = e.detail.partition("\n")[0]
+            print(f"gitswarm: token {token_id} not revoked: {reason}", file=sys.stderr)
 
     # ── 발행 ──────────────────────────────────────────────────
     def publish(self, ws_id: str) -> str:
