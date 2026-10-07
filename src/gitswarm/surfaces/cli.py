@@ -9,17 +9,15 @@ from typing import Annotated
 
 import typer
 
+# typer>=0.27 vendors click as typer._click and raises its own UsageError — click's would
+# not catch it. Pinned by `typer>=0.27,<1`; the usage-error tests go red if the path moves.
+from typer._click.exceptions import UsageError as ClickUsageError
+
 from gitswarm.constants import DEFAULT_TTL_S
 from gitswarm.errors import EXIT_CODES, GitswarmError
 from gitswarm.service.workspace import Checkout, WsState, open_service
 from gitswarm.store.hive import Hive, resolve_home
 from gitswarm.surfaces.common import agent_dict, read_payload, usage_payload
-
-# typer>=0.27 vendors click as typer._click; older typer uses the real click.
-try:
-    from typer._click import exceptions as click_exc
-except ImportError:  # pragma: no cover
-    from click import exceptions as click_exc
 
 REMOTE_ENV = "GITSWARM_REMOTE"
 EXIT_USAGE = 1
@@ -44,7 +42,7 @@ def _emit(payload: dict) -> None:
 def _remote(remote: str | None) -> str:
     if remote:
         return remote
-    raise click_exc.UsageError(f"--remote or ${REMOTE_ENV} required")
+    raise ClickUsageError(f"--remote or ${REMOTE_ENV} required")
 
 
 def _parse_labels(items: list[str]) -> dict:
@@ -52,7 +50,7 @@ def _parse_labels(items: list[str]) -> dict:
     for item in items:
         key, sep, value = item.partition("=")
         if not sep:
-            raise click_exc.UsageError(f"--label expects k=v, got {item!r}")
+            raise ClickUsageError(f"--label expects k=v, got {item!r}")
         labels[key] = value
     return labels
 
@@ -173,7 +171,7 @@ def mcp_serve() -> None:
 def main() -> None:
     try:
         rc = app(standalone_mode=False)
-    except click_exc.UsageError as e:
+    except ClickUsageError as e:
         typer.echo(json.dumps(usage_payload(e.format_message()), ensure_ascii=False))
         sys.exit(EXIT_USAGE)
     except typer.Abort:
