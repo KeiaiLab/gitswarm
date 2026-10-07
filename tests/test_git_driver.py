@@ -113,3 +113,50 @@ def test_git_failure_is_remote_error(tmp_path: Path):
     g.set_origin((tmp_path / "missing.git").as_uri())
     with pytest.raises(RemoteError):
         g.fetch("refs/heads/main")
+
+
+def test_push_pre_receive_hook_decline_raises_error(tmp_path: Path):
+    """Pre-receive hook decline is NOT a lease rejection; must raise RemoteError."""
+    # Create a bare remote with a pre-receive hook that always declines
+    remote_path = tmp_path / "remote_with_hook.git"
+    Git.init_bare(remote_path)
+    hook_path = remote_path / "hooks" / "pre-receive"
+    hook_path.write_text("#!/bin/sh\nexit 1\n")
+    hook_path.chmod(0o755)
+
+    # Create a working repo pointing to it
+    g = Git.init_bare(tmp_path / "work.git")
+    g.set_origin(remote_path.as_uri())
+
+    # Try to push; hook declines → RemoteError (not a lease rejection)
+    tree = g.build_tree({})
+    oid = g.commit_tree(tree, [], "test")
+    with pytest.raises(RemoteError):
+        g.push(oid, "refs/heads/test", expected=None)
+
+
+def test_push_lease_race_returns_false(tmp_path: Path):
+    """Simulate race where expected value changes between fetch and push → return False."""
+    remote_path = tmp_path / "remote_race.git"
+    Git.init_bare(remote_path)
+    g = Git.init_bare(tmp_path / "work.git")
+    g.set_origin(remote_path.as_uri())
+
+    # Get base oid
+    base = g.fetch("refs/heads/main")
+    # Push to create the ref
+    g.push(base, "refs/heads/race-test", expected=None)
+
+    # Simulate a race: another process updates the remote
+    # We do this by directly updating the remote's ref (simulating a competing push)
+    remote_git = Git(remote_path)
+    tree = remote_git.build_tree({})
+    competing_oid = remote_git.commit_tree(tree, [], "competing")
+    remote_git.update_ref("refs/heads/race-test", competing_oid)
+
+    # Now try to push with old expected value → lease fails
+    tree = g.build_tree({})
+    new_oid = g.commit_tree(tree, [], "our change")
+    result = g.push(new_oid, "refs/heads/race-test", expected=base)
+    # Should return False (lease rejection, not error)
+    assert result is False

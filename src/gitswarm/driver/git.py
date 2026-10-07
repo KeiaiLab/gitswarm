@@ -11,7 +11,12 @@ from gitswarm.constants import COMMIT_AUTHOR, COMMIT_EMAIL, tracking_ref
 from gitswarm.errors import RemoteError
 
 RC_LS_REMOTE_MISSING = 2
-REJECTED_MARKERS = ("[rejected]", "[remote rejected]", "stale info")
+REJECTED_MARKERS = (
+    "[rejected]",
+    "stale info",
+    "incorrect old value provided",
+    "reference already exists",
+)
 MISSING_REMOTE_REF_MARKERS = ("couldn't find remote ref", "remote ref does not exist")
 BLOB_MODE = "100644"
 TREE_MODE = "040000"
