@@ -29,6 +29,7 @@ uv run ruff format --check src scripts tests
 uv run vulture src vulture_whitelist.py --min-confidence 60
 uv run pytest tests -q --cov --cov-report=term-missing
 uv build
+if tar tzf dist/*.tar.gz | grep -E "\.hypothesis|\.forgejo"; then echo "sdist leaks dev files"; exit 1; fi
 uv run --isolated --no-project --with dist/*.whl gitswarm --help >/dev/null'
 
 if command -v ci-pod >/dev/null 2>&1; then
