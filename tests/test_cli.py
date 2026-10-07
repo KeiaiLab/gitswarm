@@ -193,3 +193,17 @@ def test_main_turns_abort_into_usage_json(monkeypatch, capsys):
     payload = json.loads(stdout.strip())
     assert code == 1
     assert payload["error"] == {"kind": "Usage", "detail": "aborted"}
+
+
+def test_tree_takes_path_as_positional_argument(inited: str):
+    _, out = run("ws", "create", "--base", "main", "--checkout", remote=inited)
+    ws_id, wt = out["id"], Path(out["path"])
+    (wt / "dogfood").mkdir()
+    (wt / "dogfood" / "a.md").write_text("a\n")
+    git("add", "dogfood", cwd=wt)
+    git("commit", "-q", "-m", "Add dogfood", cwd=wt)
+    run("ws", "publish", ws_id, remote=inited)
+
+    code, out = run("ws", "tree", ws_id, "dogfood", remote=inited)
+    assert code == 0 and out["path"] == "dogfood"
+    assert [e["name"] for e in out["entries"]] == ["a.md"]

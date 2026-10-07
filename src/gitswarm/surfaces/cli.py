@@ -128,7 +128,9 @@ def ws_read(ws_id: str, path: str, remote: RemoteOpt = None) -> None:
 
 @ws_app.command("tree")
 @guarded
-def ws_tree(ws_id: str, path: str = "", remote: RemoteOpt = None) -> None:
+def ws_tree(
+    ws_id: str, path: Annotated[str, typer.Argument()] = "", remote: RemoteOpt = None
+) -> None:
     _emit({"path": path, "entries": _svc(remote).tree(ws_id, path)})
 
 
