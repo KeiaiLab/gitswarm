@@ -83,6 +83,15 @@ def test_events_corrupt_record_raises(remote_url: str, home: Path):
         svc.events(None)
 
 
+def test_events_missing_record_raises(remote_url: str, home: Path):
+    svc = _svc(remote_url, home)
+    ws_id, other = "01J00000000000000000000000", "01J00000000000000000000001"
+    # 커밋 제목이 가리키는 레코드가 그 커밋 트리에 없다
+    oid = svc.store.apply(Change(meta_path(ws_id), lambda _: b"{}", f"ws.created {other}"))
+    with pytest.raises(InvalidState, match=f"meta {oid}: missing ws/{other}.json"):
+        svc.events(None)
+
+
 def test_jsonl_sink_creates_parent_dir(tmp_path: Path):
     path = tmp_path / "new" / "dir" / "e.jsonl"
     JsonlSink(path).emit(Event("k", "i", "o", "t", {}))

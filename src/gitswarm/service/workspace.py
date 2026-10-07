@@ -717,7 +717,9 @@ class WorkspaceService:
         out = []
         for entry in self.store.log(since):
             kind, ws_id = parse_subject(entry.subject)
-            raw = self.store.read_at(entry.oid, meta_path(ws_id)) or b"{}"
+            raw = self.store.read_at(entry.oid, meta_path(ws_id))
+            if raw is None:  # 커밋은 그 레코드를 썼다고 말한다 — 없으면 meta 가 위조됐다
+                raise InvalidState(f"meta {entry.oid}: missing {meta_path(ws_id)}")
             try:
                 data = json.loads(raw)
             except ValueError:
