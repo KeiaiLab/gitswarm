@@ -1,41 +1,39 @@
 # gitswarm
 
-[한국어](README.ko.md)
+[English](README.md)
 
-gitswarm is a coordination layer over any git remote for many LLM agents
-working on the same repository at once. Each agent run gets an isolated
-workspace branch; agents read each other's work without a checkout, publish,
-and drop. All state lives in the remote (`refs/heads/gitswarm/*`): no server,
-no daemon, no database. Every CLI command has one MCP tool with the same
-arguments and result.
+gitswarm 은 여러 LLM 에이전트가 같은 레포를 동시에 다룰 때 쓰는, 임의 git 원격 위의 조율
+계층이다. 에이전트 실행마다 격리된 workspace 브랜치를 주고, 체크아웃 없이 서로의 작업을
+읽고, 발행하고, 거둔다. 상태는 전부 원격(`refs/heads/gitswarm/*`)에 있다 — 서버·데몬·DB
+없음. CLI 명령 하나 = MCP 도구 하나, 인자·결과가 같다.
 
-## Install
+## 설치
 
 ```sh
-uv tool install gitswarm      # or: uvx gitswarm --help
+uv tool install gitswarm      # 또는: uvx gitswarm --help
 ```
 
-PyPI publication is pending. Until then, install from git:
+PyPI 발행 전이다. 그때까지는 git 에서 설치한다:
 
 ```sh
 uvx --from git+https://git.keiailab.com/keiailab-oss/gitswarm gitswarm --help
 ```
 
-Claude Code (details: [docs/recipes/claude-code.md](docs/recipes/claude-code.md)):
+Claude Code(자세히: [docs/recipes/claude-code.md](docs/recipes/claude-code.md)):
 
 ```sh
 claude mcp add gitswarm -- uvx gitswarm mcp
-# until PyPI:
+# PyPI 전까지:
 claude mcp add gitswarm -- uvx --from git+https://git.keiailab.com/keiailab-oss/gitswarm gitswarm mcp
 ```
 
-Platform: POSIX (Linux, macOS), git >= 2.39, Python >= 3.11.
+플랫폼: POSIX(Linux, macOS), git >= 2.39, Python >= 3.11.
 
-## 60 seconds
+## 60초
 
-Run it inside a clone. gitswarm finds the remote (`origin`), creates its
-local mirror on first use, and branches from the remote HEAD. The outputs
-below are real, from a `file://` remote whose default branch is `main`.
+클론 안에서 실행한다. gitswarm 이 원격(`origin`)을 찾고, 처음 쓸 때 로컬 미러를 만들고,
+원격 HEAD 에서 분기한다. 아래 출력은 기본 브랜치가 `main` 인 `file://` 원격에서 실제로 낸
+것이다.
 
 ```console
 $ cd repo
@@ -43,8 +41,8 @@ $ gitswarm ws create --agent impl --checkout
 {"ok": true, "id": "01M4B3NX30CF0XQFN7FGKTRSBC", "branch": "refs/heads/gitswarm/ws/01M4B3NX30CF0XQFN7FGKTRSBC", "base_oid": "bc876f294bbcf32c441f7e13bfef37700cc1c785", "path": "/tmp/demo/home/hives/c63648f6fa869444/wt/01M4B3NX30CF0XQFN7FGKTRSBC", "token": null, "clone": "git clone -b gitswarm/ws/01M4B3NX30CF0XQFN7FGKTRSBC file:///tmp/demo/remote.git", "branch_name": "gitswarm/ws/01M4B3NX30CF0XQFN7FGKTRSBC", "remote": "file:///tmp/demo/remote.git"}
 ```
 
-Work in `path` with plain git, then publish. Inside the worktree the remote
-is found from the hive, so no flag is needed.
+`path` 에서 평범한 git 으로 일하고 발행한다. worktree 안에서는 hive 로 원격을 찾으므로
+플래그가 필요 없다.
 
 ```console
 $ cd /tmp/demo/home/hives/c63648f6fa869444/wt/01M4B3NX30CF0XQFN7FGKTRSBC
@@ -53,7 +51,7 @@ $ gitswarm ws publish 01M4B3NX30CF0XQFN7FGKTRSBC
 {"ok": true, "id": "01M4B3NX30CF0XQFN7FGKTRSBC", "oid": "0212f996898c32b842cdc3068580f9ac019391a0", "remote": "file:///tmp/demo/remote.git"}
 ```
 
-Anyone can read it without a checkout:
+누구나 체크아웃 없이 읽는다:
 
 ```console
 $ gitswarm ws tree 01M4B3NX30CF0XQFN7FGKTRSBC src
@@ -62,38 +60,35 @@ $ gitswarm ws read 01M4B3NX30CF0XQFN7FGKTRSBC src/calc.py
 {"ok": true, "path": "src/calc.py", "content": "def add(a, b):\n    return a + b\n", "remote": "file:///tmp/demo/remote.git"}
 ```
 
-Drop it when done. This deletes the remote branch, the worktree and any
-token. It is idempotent.
+끝나면 거둔다. 원격 브랜치·worktree·토큰을 지운다. 멱등이다.
 
 ```console
 $ gitswarm ws drop 01M4B3NX30CF0XQFN7FGKTRSBC
 {"ok": true, "id": "01M4B3NX30CF0XQFN7FGKTRSBC", "state": "dropped", "base_ref": "refs/heads/main", "base_oid": "bc876f294bbcf32c441f7e13bfef37700cc1c785", "branch": "refs/heads/gitswarm/ws/01M4B3NX30CF0XQFN7FGKTRSBC", "agent": {"name": "impl"}, "parent": null, "created_at": "2026-10-07T11:58:44Z", "ttl_s": 7200, "labels": {}, "token_id": null, "published_oid": "0212f996898c32b842cdc3068580f9ac019391a0", "remote": "file:///tmp/demo/remote.git"}
 ```
 
-The remote is chosen in this order: `--remote`, `$GITSWARM_REMOTE`, the cwd
-(inside a hive worktree: that hive; inside a git repo: `origin`). The
-`remote` key of every success line is the remote actually used. With none
-of these:
+원격은 `--remote` → `$GITSWARM_REMOTE` → cwd(hive worktree 안이면 그 hive, git 레포
+안이면 `origin`) 순으로 정한다. 성공 출력의 `remote` 가 실제로 쓴 원격이다. 셋 다 없으면:
 
 ```console
 $ cd /tmp && gitswarm ws list
 {"ok": false, "error": {"kind": "Usage", "detail": "no remote: pass --remote (MCP: remote), set $GITSWARM_REMOTE, or run inside a git repo with an origin"}}
 ```
 
-`--base` defaults to the branch the remote HEAD names (`main` here, `stable`
-on some hosts). Pass it to pin the base and save one round trip.
+`--base` 기본값은 원격 HEAD 가 가리키는 브랜치다(여기서는 `main`, 호스트에 따라 `stable`).
+주면 기준을 고정하고 왕복 1회를 아낀다.
 
-## Agents on other hosts
+## 다른 호스트의 에이전트
 
-An agent on another machine needs only git. Run the `clone` field of the
-create result, commit, push, then record the result with `ws publish`. A
-plain `git push` does not change the workspace state; `ws publish` does.
+다른 머신의 에이전트는 git 만 있으면 된다. create 결과의 `clone` 필드를 그대로 실행하고,
+커밋하고, push 한 뒤 `ws publish` 로 결과를 기록한다. 평범한 `git push` 는 workspace 상태를
+바꾸지 않는다 — `ws publish` 가 바꾼다.
 
 ```console
 $ gitswarm ws create --agent reviewer
 {"ok": true, "id": "01M4B3P6V3D549KPH4SC5BTJ74", "branch": "refs/heads/gitswarm/ws/01M4B3P6V3D549KPH4SC5BTJ74", "base_oid": "bc876f294bbcf32c441f7e13bfef37700cc1c785", "path": null, "token": null, "clone": "git clone -b gitswarm/ws/01M4B3P6V3D549KPH4SC5BTJ74 file:///tmp/demo/remote.git", "branch_name": "gitswarm/ws/01M4B3P6V3D549KPH4SC5BTJ74", "remote": "file:///tmp/demo/remote.git"}
 
-# on the other host
+# 다른 호스트에서
 $ git clone -b gitswarm/ws/01M4B3P6V3D549KPH4SC5BTJ74 file:///tmp/demo/remote.git work
 $ cd work && git add REVIEW.md && git commit -qm "Add review"
 $ git push origin HEAD
@@ -103,31 +98,30 @@ $ gitswarm ws publish 01M4B3P6V3D549KPH4SC5BTJ74
 {"ok": true, "id": "01M4B3P6V3D549KPH4SC5BTJ74", "oid": "87d3743c1103ca653c4afe8db4d7a9e841649344", "remote": "file:///tmp/demo/remote.git"}
 ```
 
-Use `branch_name` (`gitswarm/ws/<id>`), not `branch` (`refs/heads/…`), with
-`git clone -b`. Publishing before any commit was pushed is refused:
+`git clone -b` 에는 `branch`(`refs/heads/…`)가 아니라 `branch_name`(`gitswarm/ws/<id>`)을
+쓴다. 아무 커밋도 push 하지 않고 발행하면 거절한다:
 
 ```console
 $ gitswarm ws publish 01M4B3PT92MMV3BST3Q0JDNBR6
 {"ok": false, "error": {"kind": "InvalidState", "detail": "nothing published: branch is still at base; commit and push to the branch first"}}
 ```
 
-Whoever coordinates the run drops the workspace (`ws drop`), or `ws gc`
-does it once `ttl_s` has passed. More: [docs/recipes/other-host.md](docs/recipes/other-host.md).
+실행을 조율하는 쪽이 workspace 를 거두거나(`ws drop`), `ttl_s` 가 지나면 `ws gc` 가 거둔다.
+자세히: [docs/recipes/other-host.md](docs/recipes/other-host.md).
 
-## When publish says Conflict
+## publish 가 Conflict 를 내면
 
-`ws publish` from a worktree pushes with a lease: it overwrites the remote
-branch only if the branch is still where gitswarm last saw it. If someone
-else pushed in between, nothing is overwritten and you get `Conflict`
-(exit 3):
+worktree 에서의 `ws publish` 는 lease 로 push 한다 — 원격 브랜치가 gitswarm 이 마지막으로 본
+자리에 그대로 있을 때만 덮어쓴다. 그 사이 남이 push 했으면 아무것도 덮어쓰지 않고
+`Conflict`(종료코드 3)다:
 
 ```console
 $ gitswarm ws publish 01M4B3PF534F5ZZJDWM0YWK6TM
 {"ok": false, "error": {"kind": "Conflict", "detail": "refs/heads/gitswarm/ws/01M4B3PF534F5ZZJDWM0YWK6TM moved on remote; run `git pull --rebase origin gitswarm/ws/01M4B3PF534F5ZZJDWM0YWK6TM` in the worktree"}}
 ```
 
-Rebase onto their commits and publish again. gitswarm sees that your HEAD
-contains the remote tip, so nothing can be lost, and pushes:
+그들의 커밋 위로 rebase 하고 다시 발행한다. HEAD 가 원격 tip 을 품었으니 잃을 것이 없음을
+gitswarm 이 확인하고 push 한다:
 
 ```console
 $ git pull --rebase origin gitswarm/ws/01M4B3PF534F5ZZJDWM0YWK6TM
@@ -137,38 +131,35 @@ $ gitswarm ws read 01M4B3PF534F5ZZJDWM0YWK6TM NOTES.md
 {"ok": true, "path": "NOTES.md", "content": "notes\n", "remote": "file:///tmp/demo/remote.git"}
 ```
 
-A plain `git fetch` in the worktree does not move the lease baseline
-(`refs/gitswarm/lease/…`); only gitswarm's own pushes do. Publishing again
-without the rebase returns the same `Conflict`.
+worktree 안의 `git fetch` 는 lease 기준(`refs/gitswarm/lease/…`)을 옮기지 않는다 —
+gitswarm 자신의 push 만 옮긴다. rebase 없이 다시 발행하면 같은 `Conflict` 다.
 
-## Commands and MCP tools
+## 명령과 MCP 도구
 
-Every command prints one JSON line (except `--help`). MCP tools return the
-same object. `remote` is optional everywhere; MCP uses the server's cwd.
+`--help` 를 뺀 모든 명령은 JSON 한 줄을 낸다. MCP 도구는 같은 객체를 돌려준다. `remote` 는
+어디서나 선택이다 — MCP 는 서버의 cwd 로 찾는다.
 
-| CLI | MCP tool | returns |
+| CLI | MCP 도구 | 반환 |
 |---|---|---|
 | `hive init <url>` | `hive_init` | `url, path` |
 | `ws create [--base] [--agent] [--run] [--ttl] [--from-ws] [--checkout] [--label k=v]` | `workspace_create` | `id, branch, branch_name, base_oid, path, token, clone, remote` |
-| `ws get <id>` | `workspace_get` | the record: `id, state, base_ref, base_oid, branch, agent, parent, created_at, ttl_s, labels, token_id, published_oid, remote` |
+| `ws get <id>` | `workspace_get` | 레코드: `id, state, base_ref, base_oid, branch, agent, parent, created_at, ttl_s, labels, token_id, published_oid, remote` |
 | `ws list [--state]` | `workspace_list` | `workspaces, invalid, remote` |
-| `ws read <id> <path>` | `workspace_read_file` | `path, content` (UTF-8) or `content_b64`, `remote` |
+| `ws read <id> <path>` | `workspace_read_file` | `path, content`(UTF-8) 또는 `content_b64`, `remote` |
 | `ws tree <id> [path]` | `workspace_tree` | `path, entries [{name, kind, oid}], remote` |
 | `ws publish <id>` | `workspace_publish` | `id, oid, remote` |
-| `ws drop <id>` | `workspace_drop` | the record, `state: dropped` |
+| `ws drop <id>` | `workspace_drop` | 레코드, `state: dropped` |
 | `ws gc` | `workspace_gc` | `expired, invalid, conflicted, remote` |
 | `events tail [--since <oid>]` | `events_tail` | `events [{kind, id, oid, at, payload}], remote` |
 | `doctor` | `doctor` | `ok, checks [{name, ok, detail}], remote` |
 | `stats` | `stats` | `by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens, remote` |
-| `mcp` | — | runs the MCP server on stdio |
+| `mcp` | — | stdio MCP 서버 |
 
-- `invalid` lists records that cannot be read; `conflicted` lists expired
-  workspaces whose branch someone pushed after this host last saw it. `gc`
-  skips both; reclaim them with `ws drop <id>`.
-- `token` is returned once by `create` and never stored (only `token_id`).
-  It is `null` unless a token adapter is configured.
-- Event kinds: `ws.created`, `ws.published`, `ws.dropped`, `ws.expired`,
-  `ws.revoked`.
+- `invalid` 는 읽을 수 없는 레코드, `conflicted` 는 이 호스트가 마지막으로 본 뒤 남이 push 한
+  만료 workspace 다. `gc` 는 둘 다 건너뛴다 — `ws drop <id>` 로 거둔다.
+- `token` 은 `create` 가 한 번만 돌려주고 저장하지 않는다(`token_id` 만 저장). 토큰 어댑터가
+  없으면 `null`.
+- 이벤트 종류: `ws.created`, `ws.published`, `ws.dropped`, `ws.expired`, `ws.revoked`.
 
 ```console
 $ gitswarm ws gc
@@ -181,43 +172,42 @@ $ gitswarm doctor
 {"ok": true, "checks": [{"name": "git", "ok": true, "detail": "git 2.55.0"}, {"name": "home", "ok": true, "detail": "/tmp/demo/home"}, {"name": "config", "ok": true, "detail": "0 remote(s), 0 sink(s)"}, {"name": "remote", "ok": true, "detail": "reachable; default branch main"}, {"name": "hive", "ok": true, "detail": "/tmp/demo/home/hives/c63648f6fa869444: 1 worktree(s)"}, {"name": "tokens", "ok": true, "detail": "every recorded token revoked"}, {"name": "ssh_mux", "ok": true, "detail": "not an ssh remote"}], "remote": "file:///tmp/demo/remote.git"}
 ```
 
-`doctor` against an SSH remote also checks connection multiplexing:
+SSH 원격이면 `doctor` 가 연결 다중화도 본다:
 
 ```console
 $ gitswarm doctor --remote ssh://git@git.keiailab.com/keiailab-oss/gitswarm.git
 {"ok": true, "checks": [{"name": "git", "ok": true, "detail": "git 2.55.0"}, {"name": "home", "ok": true, "detail": "/tmp/demo/homeR"}, {"name": "config", "ok": true, "detail": "0 remote(s), 0 sink(s)"}, {"name": "remote", "ok": true, "detail": "reachable; default branch stable"}, {"name": "hive", "ok": true, "detail": "absent; the first ws command creates it"}, {"name": "tokens", "ok": true, "detail": "no hive; nothing recorded"}, {"name": "ssh_mux", "ok": true, "detail": "connections are multiplexed"}], "remote": "ssh://git@git.keiailab.com/keiailab-oss/gitswarm.git"}
 ```
 
-### Exit codes
+### 종료코드
 
-Failures print `{"ok": false, "error": {"kind", "detail"}}`. `detail` ends
-with the next step when there is one.
+실패는 `{"ok": false, "error": {"kind", "detail"}}`. 다음 행동이 있으면 `detail` 끝에 적는다.
 
-| kind | meaning | exit |
+| 종류 | 뜻 | 종료코드 |
 |---|---|---|
-| `Usage` | bad arguments or no remote found (surfaces only) | 1 |
-| `NotFound` | id, ref or path missing; malformed id | 2 |
-| `Conflict` | someone else moved the branch or meta; CAS retries exhausted | 3 |
-| `InvalidState` | transition not allowed, malformed record, refused URL | 4 |
-| `Unsupported` | the adapter lacks the capability | 5 |
-| `RemoteError` | git or the hosting API failed | 6 |
+| `Usage` | 잘못된 인자, 원격을 못 찾음(표면 전용) | 1 |
+| `NotFound` | id·ref·경로 없음, 잘못된 id | 2 |
+| `Conflict` | 남이 브랜치·meta 를 옮김, CAS 재시도 소진 | 3 |
+| `InvalidState` | 허용되지 않는 전이, 망가진 레코드, 거절된 URL | 4 |
+| `Unsupported` | 어댑터에 그 기능 없음 | 5 |
+| `RemoteError` | git·호스팅 API 실패 | 6 |
 
-`doctor` prints `{"ok": false, "checks": […]}` and exits 1 when any check
-fails. A refused `--remote` is still `InvalidState` (exit 4).
+`doctor` 는 검사가 하나라도 실패하면 `{"ok": false, "checks": […]}` 를 내고 종료코드 1이다.
+거절된 `--remote` 는 그래도 `InvalidState`(종료코드 4)다.
 
 ```console
 $ gitswarm doctor --remote file:///tmp/demo/missing.git
 {"ok": false, "checks": [{"name": "git", "ok": true, "detail": "git 2.55.0"}, {"name": "home", "ok": true, "detail": "/tmp/demo/home"}, {"name": "config", "ok": true, "detail": "0 remote(s), 0 sink(s)"}, {"name": "remote", "ok": false, "detail": "file:///tmp/demo/missing.git unreachable: fatal: '/tmp/demo/missing.git' does not appear to be a git repository\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists."}, {"name": "hive", "ok": true, "detail": "absent; the first ws command creates it"}, {"name": "tokens", "ok": true, "detail": "no hive; nothing recorded"}, {"name": "ssh_mux", "ok": true, "detail": "not an ssh remote"}], "remote": "file:///tmp/demo/missing.git"}
 ```
 
-## Configuration
+## 설정
 
-`~/.gitswarm/config.toml` (move the whole home with `GITSWARM_HOME`).
-Without it every remote is plain git and no events are sent.
+`~/.gitswarm/config.toml`(홈 전체를 `GITSWARM_HOME` 으로 옮긴다). 없으면 모든 원격이 평범한
+git 이고 이벤트를 보내지 않는다.
 
 ```toml
 [remote."git.example.com"]
-adapter = "forgejo"                 # issues a repo-scoped token per workspace
+adapter = "forgejo"                 # workspace 마다 레포 한정 토큰 발급
 api = "https://git.example.com"
 user = "gitswarm-bot"
 credential_file = "~/.config/gitswarm/forgejo.cred"
@@ -229,40 +219,35 @@ user = "<app_id>/<installation_id>"
 credential_file = "~/.config/gitswarm/github-app.pem"
 
 [[sink]]
-kind = "jsonl"                      # or "webhook" with target = "https://…"
+kind = "jsonl"                      # 또는 "webhook" + target = "https://…"
 target = "~/.gitswarm/events.jsonl"
 ```
 
-The adapter is chosen by the remote's host; undeclared hosts are plain git.
-Sinks receive each event once, with no retry; `events tail --since` replays
-from the log.
+어댑터는 원격의 host 로 고른다 — 선언 안 된 host 는 평범한 git. sink 는 이벤트마다 한 번,
+재시도 없이 보낸다 — `events tail --since` 로 로그에서 되감는다.
 
-**Credential scope.** The Forgejo `credential_file` is a secret for the
-whole `user` account: Forgejo's token endpoint accepts only account
-authentication. Use a dedicated bot account that exists only to mint
-tokens, is a member of the target org, and can write only the target
-repositories. The GitHub PEM can mint tokens for every repository the App
-is installed on; install it on the needed repositories only. GitHub
-installation tokens last one hour and cannot be revoked by id; `drop`
-prints their expiry to stderr. Setup: [forgejo-tokens.md](docs/recipes/forgejo-tokens.md),
+**자격 범위.** Forgejo `credential_file` 은 `user` 계정 전체의 비밀이다 — Forgejo 토큰
+엔드포인트는 계정 인증만 받는다. 토큰 발급만 하는 전용 봇 계정을 쓰고, 대상 org 의 멤버로,
+대상 레포에만 쓰기 권한을 준다. GitHub PEM 은 App 이 설치된 모든 레포의 토큰을 발급할 수
+있다 — 필요한 레포에만 설치한다. GitHub installation token 은 1시간 유효하고 id 로 폐기할 수
+없다 — `drop` 이 만료 시각을 stderr 에 적는다. 준비: [forgejo-tokens.md](docs/recipes/forgejo-tokens.md),
 [github-app.md](docs/recipes/github-app.md).
 
-**Credentials in URLs are refused.** `https://user:token@host/…` fails
-with `InvalidState`. Use a git credential helper.
+**URL 안의 자격은 거절한다.** `https://user:token@host/…` 는 `InvalidState`. git credential
+helper 를 쓴다.
 
-## Authorization boundary
+## 권한 경계
 
-A workspace is not bound to the agent that created it. Anyone who can push
-`refs/heads/gitswarm/*` can publish or drop any workspace and rewrite any
-record; the boundary is the remote's push ACL. Every value read from the
-meta branch is validated and fails closed. `ws drop` deletes unpublished
-commits on that branch, including other people's; `ws gc` never deletes a
-commit this host has not seen. Details: [SECURITY.md](SECURITY.md).
+workspace 는 만든 에이전트에 묶이지 않는다. `refs/heads/gitswarm/*` 에 push 할 수 있는 누구나
+어떤 workspace 든 발행·폐기하고 어떤 레코드든 고쳐 쓸 수 있다 — 경계는 원격의 push ACL 이다.
+meta 브랜치에서 읽은 값은 전부 검증하고 fail-closed 한다. `ws drop` 은 그 브랜치의 발행 안 된
+커밋(남의 것 포함)까지 지우고, `ws gc` 는 이 호스트가 본 적 없는 커밋을 절대 지우지 않는다.
+자세히: [SECURITY.md](SECURITY.md).
 
 ## CI
 
-Workspace branches are ordinary branches. Make your CI ignore
-`gitswarm/**`, or every create, publish and meta write starts a run:
+workspace 브랜치는 평범한 브랜치다. CI 가 `gitswarm/**` 를 무시하게 하라 — 아니면 create·
+publish·meta 쓰기마다 런이 뜬다:
 
 ```yaml
 on:
@@ -271,53 +256,49 @@ on:
       - "gitswarm/**"
 ```
 
-Forgejo Actions and GitHub Actions use the same syntax.
-More: [docs/recipes/ci.md](docs/recipes/ci.md).
+Forgejo Actions 와 GitHub Actions 가 같은 문법이다. 자세히: [docs/recipes/ci.md](docs/recipes/ci.md).
 
-## Performance
+## 성능
 
-A command makes 1 to 4 remote round trips. SSH connections are multiplexed
-per hive, so a command opens no new handshake while the master lives (60 s).
-Measured against Forgejo over SSH (RTT 0.2 s), median of 3 rounds:
+명령 하나는 원격 왕복 1~4회다. SSH 연결은 hive 별로 다중화되어, 마스터가 사는 동안(60 초)
+명령은 새 핸드셰이크를 열지 않는다. Forgejo(SSH, RTT 0.2 s) 실측, 3 라운드 중앙값:
 
-| command | ssh connections | new handshakes | seconds (median) | budget |
+| 명령 | ssh 연결 | 새 핸드셰이크 | 초(중앙값) | 예산 |
 |---|---|---|---|---|
 | hive init | 1 | 1 | 3.49 | - |
-| ws create --checkout | 4 | 0 | 1.62 | ≤ 4 conn, ≤ 2.5 s |
-| ws get | 1 | 0 | 0.29 | ≤ 1 conn |
-| ws list | 1 | 0 | 0.71 | ≤ 1 conn |
-| ws read | 2 | 0 | 0.54 | ≤ 2 conn |
-| ws tree | 2 | 0 | 0.49 | ≤ 2 conn |
-| ws publish | 4 | 0 | 1.68 | ≤ 4 conn, ≤ 2.5 s |
-| events tail | 1 | 0 | 1.30 | ≤ 1 conn |
-| ws gc | 1 | 0 | 0.64 | ≤ 1 conn |
-| ws drop | 4 | 0 | 1.71 | ≤ 4 conn |
+| ws create --checkout | 4 | 0 | 1.62 | ≤ 4 연결, ≤ 2.5 s |
+| ws get | 1 | 0 | 0.29 | ≤ 1 연결 |
+| ws list | 1 | 0 | 0.71 | ≤ 1 연결 |
+| ws read | 2 | 0 | 0.54 | ≤ 2 연결 |
+| ws tree | 2 | 0 | 0.49 | ≤ 2 연결 |
+| ws publish | 4 | 0 | 1.68 | ≤ 4 연결, ≤ 2.5 s |
+| events tail | 1 | 0 | 1.30 | ≤ 1 연결 |
+| ws gc | 1 | 0 | 0.64 | ≤ 1 연결 |
+| ws drop | 4 | 0 | 1.71 | ≤ 4 연결 |
 
-Reproduce with `uv run scripts/bench.py <remote-url> --base <branch>`
-(exit 1 if over budget). The connection budget is the real gate; the 2.5 s
-budget is tight on a shared server, where a push sometimes takes seconds.
+재현: `uv run scripts/bench.py <remote-url> --base <branch>`(예산 초과면 종료코드 1). 연결 수
+예산이 본 기준이다 — 2.5 s 예산은 공유 서버에서 빠듯하다(push 가 가끔 수 초 걸린다).
 
-## Development
+## 개발
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The gate, as CI runs it:
+[CONTRIBUTING.md](CONTRIBUTING.md). CI 와 같은 게이트:
 
 ```sh
 uv sync --dev
 uv run ruff check src scripts tests
 uv run ruff format --check src scripts tests
 uv run vulture src vulture_whitelist.py --min-confidence 60
-uv run pytest -q --cov          # coverage must be 100%
+uv run pytest -q --cov          # 커버리지 100% 필수
 ```
 
-Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
-[docs/superpowers/specs/](docs/superpowers/specs/). Changes: [CHANGELOG.md](CHANGELOG.md).
+설계: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/superpowers/specs/](docs/superpowers/specs/).
+변경 이력: [CHANGELOG.md](CHANGELOG.md).
 
-## Roadmap
+## 로드맵
 
-A Workspace (this release) → B Intent (record why each commit exists:
-instruction, rationale, checks) → C Landing (merge concurrent results:
-serial rebase and machine arbitration; per-agent ownership).
+A Workspace(이 판) → B Intent(커밋마다 왜: 지시·근거·검사 기록) → C Landing(동시 결과 병합:
+직렬 rebase·기계 중재, 에이전트별 소유권).
 
-## License
+## 라이선스
 
 MIT. Copyright KeiaiLab.
