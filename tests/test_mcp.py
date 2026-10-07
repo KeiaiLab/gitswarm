@@ -67,7 +67,7 @@ def test_list_filters_and_rejects_bad_state(remote_url: str, home: Path):
     b = _create(remote_url)
     call("workspace_publish", remote=remote_url, ws_id=a["id"])
     got = call("workspace_list", remote=remote_url, state="published")
-    assert [w["id"] for w in got["workspaces"]] == [a["id"]]
+    assert [w["id"] for w in got["workspaces"]] == [a["id"]] and got["invalid"] == []
     assert b["id"] not in [w["id"] for w in got["workspaces"]]
     bad = call("workspace_list", remote=remote_url, state="bogus")
     assert bad["ok"] is False and bad["error"]["kind"] == "Usage"
@@ -78,7 +78,7 @@ def test_tree_and_gc(remote_url: str, home: Path):
     r = _create(remote_url)
     tree = call("workspace_tree", remote=remote_url, ws_id=r["id"])
     assert "README.md" in str(tree["entries"])
-    assert call("workspace_gc", remote=remote_url) == {"ok": True, "expired": []}
+    assert call("workspace_gc", remote=remote_url) == {"ok": True, "expired": [], "invalid": []}
 
 
 def test_read_binary_as_b64(remote_url: str, home: Path):

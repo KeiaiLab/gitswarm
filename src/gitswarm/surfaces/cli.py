@@ -115,7 +115,8 @@ def ws_list(
     remote: RemoteOpt = None,
     state: Annotated[WsState | None, typer.Option("--state")] = None,
 ) -> None:
-    _emit({"workspaces": [w.to_dict() for w in _svc(remote).list(state)]})
+    good, invalid = _svc(remote).list_report(state)
+    _emit({"workspaces": [w.to_dict() for w in good], "invalid": invalid})
 
 
 @ws_app.command("read")
@@ -146,7 +147,7 @@ def ws_drop(ws_id: str, remote: RemoteOpt = None) -> None:
 @ws_app.command("gc")
 @guarded
 def ws_gc(remote: RemoteOpt = None) -> None:
-    _emit({"expired": _svc(remote).gc()})
+    _emit(_svc(remote).gc())
 
 
 # ── events ───────────────────────────────────────────────────

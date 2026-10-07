@@ -186,8 +186,12 @@ def test_forged_branch_fails_closed(svc: WorkspaceService):
     _forge(svc)
     with pytest.raises(InvalidState):
         svc.get(FORGED_ID)
+    assert svc.list(None) == []
+    _, invalid = svc.list_report(None)
+    assert [i["id"] for i in invalid] == [FORGED_ID]
+    # 저장된 브랜치가 재계산과 다르면 강제 drop 도 거절한다
     with pytest.raises(InvalidState):
-        svc.list(None)
+        svc.drop(FORGED_ID)
 
 
 def test_forged_token_id_fails_closed(svc: WorkspaceService):
@@ -310,3 +314,34 @@ def test_meta_exhaustion_compensates_branch_and_token(
     assert len(adapter.issued) == 1 and adapter.revoked == ["42"]
     ws_id = adapter.issued[0][1]
     assert hive.git.exists(ws_ref(ws_id)) is False
+
+
+@pytest.mark.parametrize("ttl", [-5, True, "7200", 1.5, 365 * 24 * 3600 + 1])
+def test_create_rejects_bad_ttl(svc: WorkspaceService, ttl):
+    with pytest.raises(InvalidState):
+        svc.create("main", {}, ttl_s=ttl, from_ws=None, checkout=Checkout.NONE, labels={})
+    assert svc.store.list("ws/") == []
+    assert svc.hive.git.ls_remote_prefix(ws_ref("")) == {}
+
+
+def test_malformed_record_does_not_halt_list_gc_drop(svc: WorkspaceService):
+    good = svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
+    bad = svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.WORKTREE, labels={})
+    d = json.loads(svc.store.read(meta_path(bad.id))) | {"ttl_s": -5}
+    body = (json.dumps(d) + "\n").encode()
+    svc.store.apply(Change(meta_path(bad.id), lambda _: body, f"forge {bad.id}"))
+
+    # 나쁜 레코드 하나가 목록·회수를 멈추지 않는다
+    assert [w.id for w in svc.list(None)] == [good.id]
+    _, invalid = svc.list_report(None)
+    assert [i["id"] for i in invalid] == [bad.id] and invalid[0]["detail"]
+    assert svc.gc() == {"expired": [], "invalid": invalid}
+
+    # 그 레코드도 drop 으로 거둘 수 있다
+    dropped = svc.drop(bad.id)
+    assert dropped.state is WsState.DROPPED and dropped.ttl_s == 0
+    assert svc.list_report(None)[1] == []
+    assert svc.get(bad.id).state is WsState.DROPPED
+    assert svc.hive.git.ls_remote(bad.branch) is None
+    assert not Path(bad.path).exists()
+    assert svc.get(good.id).state is WsState.OPEN

@@ -96,10 +96,10 @@ def test_gc_drops_expired_only(remote_url: str, home: Path):
     old = svc.create("main", {}, 60, None, Checkout.NONE, {})
     forever = svc.create("main", {}, 0, None, Checkout.NONE, {})
     svc.clock = lambda: now + timedelta(seconds=61)
-    assert svc.gc() == [old.id]
+    assert svc.gc() == {"expired": [old.id], "invalid": []}
     assert svc.get(old.id).state is WsState.DROPPED
     assert svc.get(forever.id).state is WsState.OPEN
-    assert svc.gc() == []
+    assert svc.gc() == {"expired": [], "invalid": []}
 
 
 def test_read_does_not_move_publish_baseline(svc: WorkspaceService, tmp_path: Path):
@@ -141,5 +141,51 @@ def test_forged_expiry_fields_fail_closed(svc: WorkspaceService, over: dict):
     ws_id = _forge_fields(svc, **over)
     with pytest.raises(InvalidState):
         svc.get(ws_id)
+    assert [i["id"] for i in svc.gc()["invalid"]] == [ws_id]
+
+
+OTHER_ID = "01J00000000000000000000009"
+
+
+def _drop_key(key: str):
+    return lambda d: (json.dumps({k: v for k, v in d.items() if k != key}) + "\n").encode()
+
+
+def _over(**kv):
+    return lambda d: (json.dumps(d | kv) + "\n").encode()
+
+
+@pytest.mark.parametrize(
+    "forge",
+    [
+        _over(state="bogus"),
+        _over(ttl_s=10**30),
+        _over(token_id=5),
+        _over(parent=5),
+        _over(parent="x"),
+        _over(branch=5),
+        _over(id=5),
+        _over(id=OTHER_ID),
+        _drop_key("base_oid"),
+        _drop_key("state"),
+        lambda d: b"not json",
+        lambda d: b"[1]",
+        lambda d: b'"str"',
+        lambda d: b"\xff\xfe",
+    ],
+)
+def test_forged_records_are_invalid_state(svc: WorkspaceService, forge):
+    r = svc.create("main", {}, 60, None, Checkout.NONE, {})
+    body = forge(json.loads(svc.store.read(meta_path(r.id))))
+    svc.store.apply(Change(meta_path(r.id), lambda _: body, f"forge {r.id}"))
     with pytest.raises(InvalidState):
-        svc.gc()
+        svc.get(r.id)
+    good, invalid = svc.list_report(None)
+    assert good == [] and [i["id"] for i in invalid] == [r.id]
+    assert svc.gc()["invalid"] == invalid
+
+
+def test_gc_far_future_expiry_does_not_overflow(svc: WorkspaceService):
+    ws_id = _forge_fields(svc, created_at="9999-12-31T00:00:00Z", ttl_s=365 * 24 * 3600)
+    assert svc.gc() == {"expired": [], "invalid": []}
+    assert svc.get(ws_id).state is WsState.OPEN

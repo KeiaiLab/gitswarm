@@ -55,6 +55,10 @@ class MetaStore:
         tip = self.tip()
         if tip is None:
             return []
+        return self.list_at(tip, prefix)
+
+    def list_at(self, tip: str, prefix: str) -> list[str]:
+        """주어진 tip 의 경로 목록(fetch 없음) — 같은 tip 에서 read_at 하라."""
         files = self.git.ls_tree_recursive(tip)
         return sorted(p for p in files if p.startswith(prefix))
 

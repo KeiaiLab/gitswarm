@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from ulid import ULID
 
@@ -23,8 +24,10 @@ from gitswarm.adapters.select import adapter_for, repo_name
 from gitswarm.config import load_config
 from gitswarm.constants import (
     HEADS,
+    MAX_TTL_S,
     TOKEN_ID_RE,
     TTL_FOREVER,
+    WS_DIR,
     meta_path,
     peek_ref,
     tracking_ref,
@@ -44,6 +47,9 @@ EV_CREATED = "ws.created"
 EV_PUBLISHED = "ws.published"
 EV_DROPPED = "ws.dropped"
 EV_EXPIRED = "ws.expired"
+
+REQUIRED_STR_FIELDS = ("id", "base_ref", "base_oid", "branch")
+OPTIONAL_STR_FIELDS = ("parent", "token_id")
 
 
 class WsState(StrEnum):
@@ -71,9 +77,14 @@ def _check_id(ws_id: str) -> str:
     return ws_id
 
 
+def _valid_ttl(ttl: object) -> bool:
+    """정수(bool 아님), 0(무기한) ≤ ttl ≤ MAX_TTL_S."""
+    return isinstance(ttl, int) and not isinstance(ttl, bool) and 0 <= ttl <= MAX_TTL_S
+
+
 def _check_expiry(ws: Workspace) -> None:
     ttl = ws.ttl_s
-    if not isinstance(ttl, int) or isinstance(ttl, bool) or ttl < 0:
+    if not _valid_ttl(ttl):
         raise InvalidState(f"{ws.id}: invalid ttl_s {ttl!r}")
     try:
         born = datetime.fromisoformat(ws.created_at.replace("Z", "+00:00"))
@@ -81,6 +92,27 @@ def _check_expiry(ws: Workspace) -> None:
         raise InvalidState(f"{ws.id}: invalid created_at {ws.created_at!r}") from e
     if born.tzinfo is None:
         raise InvalidState(f"{ws.id}: created_at {ws.created_at!r} has no timezone")
+
+
+def _expired(ws: Workspace, now: datetime) -> bool:
+    if ws.ttl_s == TTL_FOREVER:
+        return False
+    born = datetime.fromisoformat(ws.created_at.replace("Z", "+00:00"))
+    try:
+        return born + timedelta(seconds=ws.ttl_s) < now
+    except OverflowError:  # 9999 년 근처 — 만료가 표현 범위 밖이면 아직 아니다
+        return False
+
+
+def _check_str_fields(ws: Workspace) -> None:
+    """원격 레코드의 타입을 정규식·비교 전에 확인한다(숫자 id 가 TypeError 로 새지 않게)."""
+    for name in REQUIRED_STR_FIELDS:
+        if not isinstance(getattr(ws, name), str):
+            raise InvalidState(f"malformed workspace record: {name} is not a string")
+    for name in OPTIONAL_STR_FIELDS:
+        v = getattr(ws, name)
+        if v is not None and not isinstance(v, str):
+            raise InvalidState(f"malformed workspace record: {name} is not a string")
 
 
 def utcnow() -> datetime:
@@ -115,17 +147,24 @@ class Workspace:
 
     @classmethod
     def from_json(cls, data: bytes) -> Workspace:
-        d = json.loads(data)
-        d["state"] = WsState(d["state"])
-        known = {f.name for f in fields(cls)}
-        ws = cls(**{k: v for k, v in d.items() if k in known})
-        _check_id(ws.id)
+        """원격 레코드 → Workspace. 어떤 모양이 와도 실패는 InvalidState 하나다."""
+        try:
+            d = json.loads(data)
+            d["state"] = WsState(d["state"])
+            known = {f.name for f in fields(cls)}
+            ws = cls(**{k: v for k, v in d.items() if k in known})
+        except (ValueError, TypeError, KeyError, OverflowError) as e:
+            raise InvalidState(f"malformed workspace record: {type(e).__name__}") from None
+
+        _check_str_fields(ws)
+        if not ULID_RE.fullmatch(ws.id):
+            raise InvalidState(f"malformed workspace record: id {ws.id!r}")
         if ws.branch != ws_ref(ws.id):
             raise InvalidState(
                 f"{ws.id}: stored branch {ws.branch!r} does not match {ws_ref(ws.id)!r}"
             )
-        if ws.parent is not None:
-            _check_id(ws.parent)
+        if ws.parent is not None and not ULID_RE.fullmatch(ws.parent):
+            raise InvalidState(f"{ws.id}: invalid parent {ws.parent!r}")
         if ws.token_id is not None and not TOKEN_ID_RE.fullmatch(ws.token_id):
             raise InvalidState(f"{ws.id}: invalid token id {ws.token_id!r}")
         _check_expiry(ws)
@@ -151,6 +190,61 @@ class CreateResult:
 
 def _full_ref(ref: str) -> str:
     return ref if ref.startswith("refs/") else HEADS + ref
+
+
+def _parse_record(ws_id: str, data: bytes) -> Workspace:
+    """ws/<ws_id>.json 의 내용. 안의 id 가 경로와 다르면 위조다."""
+    ws = Workspace.from_json(data)
+    if ws.id != ws_id:
+        raise InvalidState(f"{ws_id}: record carries id {ws.id!r}")
+    return ws
+
+
+def _path_id(path: str) -> str:
+    """meta 경로 ws/<id>.json → <id>."""
+    return path.removeprefix(f"{WS_DIR}/").removesuffix(".json")
+
+
+def _raw_dict(data: bytes | None) -> dict:
+    """망가진 레코드에서 건질 수 있는 만큼. JSON 객체가 아니면 빈 사전."""
+    try:
+        d = json.loads(data or b"")
+    except ValueError:
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def _salvage(ws_id: str, prev: bytes | None, now: datetime) -> Workspace:
+    """강제 drop 이 쓰는 레코드. 유효한 필드만 옮기고 나머지는 기본값, 만료 필드는 새로."""
+    if prev is None:
+        raise NotFound(f"workspace {ws_id} not found")
+    try:
+        return _parse_record(ws_id, prev).with_state(WsState.DROPPED)
+    except InvalidState:
+        pass
+
+    d = _raw_dict(prev)
+
+    def pick(key: str, ok: Callable[[object], bool], default: object) -> Any:
+        v = d.get(key)
+        return v if ok(v) else default
+
+    def is_str(v: object) -> bool:
+        return isinstance(v, str)
+
+    return Workspace(
+        id=ws_id,
+        state=WsState.DROPPED,
+        base_ref=pick("base_ref", is_str, ""),
+        base_oid=pick("base_oid", is_str, ""),
+        branch=ws_ref(ws_id),
+        agent=pick("agent", lambda v: isinstance(v, dict), {}),
+        parent=pick("parent", lambda v: is_str(v) and bool(ULID_RE.fullmatch(v)), None),
+        created_at=_iso(now),
+        ttl_s=TTL_FOREVER,
+        labels=pick("labels", lambda v: isinstance(v, dict), {}),
+        token_id=pick("token_id", lambda v: is_str(v) and bool(TOKEN_ID_RE.fullmatch(v)), None),
+    )
 
 
 def _new_only(prev: bytes | None, ws: Workspace) -> Workspace:
@@ -181,18 +275,35 @@ class WorkspaceService:
         data = self.store.read(meta_path(ws_id))
         if data is None:
             raise NotFound(f"workspace {ws_id} not found")
-        return Workspace.from_json(data)
+        return _parse_record(ws_id, data)
 
     def list(self, state: WsState | None) -> list[Workspace]:
+        return self.list_report(state)[0]
+
+    def list_report(self, state: WsState | None) -> tuple[list[Workspace], list[dict]]:
+        """(state 에 맞는 유효 레코드, 망가진 레코드 [{id, detail}]). 한 tip 에서 읽는다.
+
+        망가진 레코드 하나가 모두의 목록·회수를 멈추지 않게 따로 보고한다.
+        """
         tip = self.store.tip()
         if tip is None:
-            return []
-        out = []
-        for path in self.store.list("ws/"):
-            ws = Workspace.from_json(self.store.read_at(tip, path) or b"{}")
+            return [], []
+
+        good: list[Workspace] = []
+        invalid: list[dict] = []
+        for path in self.store.list_at(tip, f"{WS_DIR}/"):
+            ws_id = _path_id(path)
+            data = self.store.read_at(tip, path)
+            if data is None:
+                raise InvalidState(f"meta {tip}: listed {path} is unreadable")
+            try:
+                ws = _parse_record(ws_id, data)
+            except InvalidState as e:
+                invalid.append({"id": ws_id, "detail": e.detail})
+                continue
             if state is None or ws.state is state:
-                out.append(ws)
-        return out
+                good.append(ws)
+        return good, invalid
 
     # ── 생성 ──────────────────────────────────────────────────
     def create(
@@ -204,6 +315,8 @@ class WorkspaceService:
         checkout: Checkout,
         labels: dict,
     ) -> CreateResult:
+        if not _valid_ttl(ttl_s):
+            raise InvalidState(f"ttl_s must be an integer in [0, {MAX_TTL_S}], got {ttl_s!r}")
         parent = self.get(from_ws) if from_ws else None
         src_ref = parent.branch if parent else _full_ref(base_ref)
         base_oid = self.hive.git.fetch(src_ref)
@@ -301,10 +414,33 @@ class WorkspaceService:
 
     # ── 폐기 ──────────────────────────────────────────────────
     def drop(self, ws_id: str) -> Workspace:
-        ws = self.get(ws_id)
+        try:
+            ws = self.get(ws_id)
+        except InvalidState:
+            return self._force_drop(ws_id)
         if ws.state is WsState.DROPPED:
             return ws
         return self._drop_as(ws, EV_DROPPED)
+
+    def _force_drop(self, ws_id: str) -> Workspace:
+        """망가진 레코드의 회수. 지우는 브랜치는 id 로 재계산한 것뿐이다."""
+        raw = _raw_dict(self.store.read(meta_path(ws_id)))
+        stored = raw.get("branch")
+        branch = ws_ref(ws_id)
+        if isinstance(stored, str) and stored != branch:
+            raise InvalidState(
+                f"{ws_id}: stored branch {stored!r} does not match {branch!r}; not dropping"
+            )
+
+        # 레코드를 못 믿으니 lease 기준도 없다 — 무조건 삭제(멱등)
+        self.hive.git.delete_remote(branch, None)
+        self._clear_local(ws_id, branch)
+        token_id = raw.get("token_id")
+        if isinstance(token_id, str) and TOKEN_ID_RE.fullmatch(token_id):
+            self._revoke(token_id)
+
+        now = self.clock()
+        return self._record(ws_id, EV_DROPPED, lambda prev: _salvage(ws_id, prev, now))
 
     def _drop_as(self, ws: Workspace, kind: str) -> Workspace:
         # 원격 먼저, lease 로 — 이 호스트가 본 뒤 남이 옮긴 브랜치는 지우지 않는다(로컬도 그대로 둔다)
@@ -315,17 +451,23 @@ class WorkspaceService:
                 "Publish or inspect it first."
             )
 
-        wt = self.hive.worktree_dir(ws.id)
-        if wt.exists():
-            self.hive.git.worktree_remove(wt)
-        if self.hive.git.exists(ws.branch):
-            self.hive.git.delete_ref(ws.branch)
-        if self.hive.git.exists(peek_ref(ws.branch)):
-            self.hive.git.delete_ref(peek_ref(ws.branch))
-        if ws.token_id and Capability.TOKEN in self.adapter.capabilities():
-            self.adapter.revoke_token(ws.token_id)
+        self._clear_local(ws.id, ws.branch)
+        if ws.token_id:
+            self._revoke(ws.token_id)
 
         return self._transition(ws.id, kind, lambda cur: cur.with_state(WsState.DROPPED))
+
+    def _clear_local(self, ws_id: str, branch: str) -> None:
+        wt = self.hive.worktree_dir(ws_id)
+        if wt.exists():
+            self.hive.git.worktree_remove(wt)
+        for ref in (branch, peek_ref(branch)):
+            if self.hive.git.exists(ref):
+                self.hive.git.delete_ref(ref)
+
+    def _revoke(self, token_id: str) -> None:
+        if Capability.TOKEN in self.adapter.capabilities():
+            self.adapter.revoke_token(token_id)
 
     # ── 발행 ──────────────────────────────────────────────────
     def publish(self, ws_id: str) -> str:
@@ -347,14 +489,16 @@ class WorkspaceService:
         return head
 
     # ── 회수 ──────────────────────────────────────────────────
-    def gc(self) -> list[str]:
+    def gc(self) -> dict:
+        """ttl 이 지난 open 을 drop. 반환 {"expired": [id], "invalid": [{id, detail}]}.
+
+        망가진 레코드는 건너뛰고 보고만 한다 — `ws drop <id>` 가 거둔다.
+        """
         now = self.clock()
+        open_ws, invalid = self.list_report(WsState.OPEN)
         expired = []
-        for ws in self.list(WsState.OPEN):
-            if ws.ttl_s == TTL_FOREVER:
-                continue
-            born = datetime.fromisoformat(ws.created_at.replace("Z", "+00:00"))
-            if born + timedelta(seconds=ws.ttl_s) >= now:
+        for ws in open_ws:
+            if not _expired(ws, now):
                 continue
 
             # 옮겨진 브랜치 하나가 나머지 회수를 막지 않는다
@@ -364,7 +508,7 @@ class WorkspaceService:
                 print(f"gitswarm: gc skipped {ws.id}: {e.detail}", file=sys.stderr)
                 continue
             expired.append(ws.id)
-        return expired
+        return {"expired": expired, "invalid": invalid}
 
     def events(self, since: str | None) -> list[Event]:
         if since is not None and not OID_RE.fullmatch(since):

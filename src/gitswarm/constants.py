@@ -16,6 +16,7 @@ CAS_BACKOFF_MAX_S = 1.0
 FETCH_LOCK_RETRIES = 5  # 같은 hive 를 쓰는 형제 프로세스와의 로컬 ref 잠금 경합
 DEFAULT_TTL_S = 7200
 TTL_FOREVER = 0
+MAX_TTL_S = 365 * 24 * 3600  # 1 년. 날짜 연산이 넘치지 않는 상한
 ULID_LEN = 26
 TOKEN_ID_RE = re.compile(r"[0-9]+")  # 원격 PAT id: URL 경로에 들어가므로 숫자만
 

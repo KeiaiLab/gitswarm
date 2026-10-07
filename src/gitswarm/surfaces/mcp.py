@@ -80,9 +80,10 @@ def workspace_get(remote: str, ws_id: str) -> dict:
 @mcp.tool
 @payload
 def workspace_list(remote: str, state: str | None = None) -> dict:
-    """workspace 목록. state = open|published|dropped. Returns {ok, workspaces: [meta, ...]}. On failure returns {ok: false, error: {kind, detail}}."""
+    """workspace 목록. state = open|published|dropped. Returns {ok, workspaces: [meta, ...], invalid: [{id, detail}, ...]} (invalid = 읽을 수 없는 레코드, workspace_drop 으로 거둔다). On failure returns {ok: false, error: {kind, detail}}."""
     flt = parse_state(state)
-    return {"workspaces": [w.to_dict() for w in _svc(remote).list(flt)]}
+    good, invalid = _svc(remote).list_report(flt)
+    return {"workspaces": [w.to_dict() for w in good], "invalid": invalid}
 
 
 @mcp.tool
@@ -120,8 +121,8 @@ def workspace_drop(remote: str, ws_id: str) -> dict:
 @mcp.tool
 @payload
 def workspace_gc(remote: str) -> dict:
-    """ttl 이 지난 open workspace 를 drop 한다. Returns {ok, expired: [ws id, ...]}. On failure returns {ok: false, error: {kind, detail}}."""
-    return {"expired": _svc(remote).gc()}
+    """ttl 이 지난 open workspace 를 drop 한다. Returns {ok, expired: [ws id, ...], invalid: [{id, detail}, ...]} (invalid 는 건너뛴 망가진 레코드). On failure returns {ok: false, error: {kind, detail}}."""
+    return _svc(remote).gc()
 
 
 @mcp.tool

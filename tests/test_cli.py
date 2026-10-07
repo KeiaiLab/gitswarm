@@ -56,12 +56,13 @@ def test_lifecycle_via_cli(inited: str):
 
     code, out = run("ws", "list", "--state", "published", remote=inited)
     assert code == 0 and [w["id"] for w in out["workspaces"]] == [ws_id]
+    assert out["invalid"] == []
 
     code, out = run("ws", "drop", ws_id, remote=inited)
     assert code == 0 and out["state"] == "dropped"
 
     code, out = run("ws", "gc", remote=inited)
-    assert code == 0 and out["expired"] == []
+    assert code == 0 and out == {"ok": True, "expired": [], "invalid": []}
 
 
 def test_error_exit_codes(inited: str):
