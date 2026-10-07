@@ -51,15 +51,19 @@ def test_push_lease_create_then_reject(repo: Git):
     assert repo.rev_parse(tracking_ref("refs/heads/gitswarm/meta")) == base
 
 
-def test_push_lease_wrong_expected_with_different_oid(repo: Git):
-    # (a) remote at A, push B with expected=<wrong oid> → False
+def test_push_lease_different_oid_with_wrong_expected(repo: Git):
+    # Remote at A, push B with expected=<wrong oid> → False (git's lease rejection)
     tree = repo.build_tree({})
-    new_oid = repo.commit_tree(tree, [], "new")
-    # Push new_oid to create the ref
-    assert repo.push(new_oid, "refs/heads/gitswarm/test_a", expected=None) is True
-    # Try to push it again with wrong expected (anything other than new_oid) → False
+    oid_a = repo.commit_tree(tree, [], "commit_a")
+    # Push oid_a to create the ref
+    assert repo.push(oid_a, "refs/heads/gitswarm/test", expected=None) is True
+    # Create a different oid
+    oid_b = repo.commit_tree(tree, [], "commit_b")
+    # Try to push oid_b with wrong expected (not A, not B) → False
     wrong_oid = repo.fetch("refs/heads/main")
-    assert repo.push(new_oid, "refs/heads/gitswarm/test_a", expected=wrong_oid) is False
+    assert repo.push(oid_b, "refs/heads/gitswarm/test", expected=wrong_oid) is False
+    # Verify remote still has oid_a (not updated to oid_b)
+    assert repo.ls_remote("refs/heads/gitswarm/test") == oid_a
 
 
 def test_push_lease_new_oid_with_none_expected(repo: Git):
