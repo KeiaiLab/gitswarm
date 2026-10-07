@@ -50,10 +50,17 @@ def diagnose(remote: str | None, home: Path) -> dict:
     elif (refused := _refused(remote)) is not None:
         checks.append(refused)
     else:
+        hive = _guard("hive", lambda: _hive(remote, home))
+        # tokens 는 hive 로 meta 를 읽는다 — hive 가 망가졌으면 같은 실패를 두 번 세지 않는다
+        tokens = (
+            _guard("tokens", lambda: _tokens(remote, home))
+            if hive.ok
+            else Check("tokens", True, "skipped; hive check failed")
+        )
         checks += [
             _guard("remote", lambda: _remote(remote)),
-            _guard("hive", lambda: _hive(remote, home)),
-            _guard("tokens", lambda: _tokens(remote, home)),
+            hive,
+            tokens,
             _guard("ssh_mux", lambda: _ssh_mux(remote, home)),
         ]
     return {"ok": all(c.ok for c in checks), "checks": [asdict(c) for c in checks]}

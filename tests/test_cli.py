@@ -405,3 +405,5 @@ def test_doctor_reports_corrupt_hive_and_exits_1(inited: str, home: Path):
     code, out = run("doctor", remote=inited)
     assert code == 1 and out["ok"] is False
     assert [c["name"] for c in out["checks"] if not c["ok"]] == ["hive"]
+    tokens = next(c for c in out["checks"] if c["name"] == "tokens")
+    assert tokens["detail"] == "skipped; hive check failed"
