@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import tomllib
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gitswarm.driver.git import Git
-from gitswarm.errors import NotFound, RemoteError
+from gitswarm.errors import InvalidState, NotFound, RemoteError
 from gitswarm.urls import validate_remote_url
 
 HOME_ENV = "GITSWARM_HOME"
@@ -42,7 +43,19 @@ def hive_id(url: str) -> str:
 
 
 def _stored_url(hive_file: Path) -> str:
-    return tomllib.loads(hive_file.read_text())["url"]
+    """hive.toml 의 url. 손상·허용 목록 밖이면 InvalidState — 이 값은 곧 git 에 넘어간다."""
+    try:
+        url = tomllib.loads(hive_file.read_text())["url"]
+        if not isinstance(url, str):
+            raise TypeError(type(url).__name__)
+        return validate_remote_url(url)
+    except (ValueError, KeyError, TypeError, InvalidState):
+        raise InvalidState(f"hive.toml is corrupt: {hive_file}") from None
+
+
+def _hive_toml(url: str) -> str:
+    # JSON 문자열 이스케이프는 TOML basic string 과 호환된다(`"`, `\`, \uXXXX)
+    return f"url = {json.dumps(url)}\n"
 
 
 def worktree_owner(path: Path, home: Path) -> str | None:
@@ -82,7 +95,7 @@ class Hive:
             raise
 
         (path / WT_DIR).mkdir(exist_ok=True)
-        (path / HIVE_FILE).write_text(f'url = "{url}"\n')
+        (path / HIVE_FILE).write_text(_hive_toml(url))
         return cls(path, url, git)
 
     @classmethod

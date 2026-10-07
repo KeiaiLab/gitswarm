@@ -49,3 +49,27 @@ def test_hive_refuses_bad_urls(url: str, home: Path):
         Hive.init(url, home)
     with pytest.raises(InvalidState):
         Hive.open(url, home)
+
+
+# ── hive.toml ────────────────────────────────────────────────
+@pytest.mark.parametrize("name", ['r"#x.git', "b\\q.git"])
+def test_hive_toml_round_trips_odd_urls(tmp_path: Path, home: Path, name: str):
+    from tests.conftest import git
+
+    bare = tmp_path / name
+    git("init", "--bare", "-q", str(bare), cwd=tmp_path)
+    url = str(bare)
+    assert Hive.init(url, home).url == url
+    assert Hive.open(url, home).url == url
+
+
+@pytest.mark.parametrize(
+    "text", ["url = [", "nope = 1\n", "url = 7\n", 'url = "--upload-pack=x"\n']
+)
+def test_corrupt_hive_toml_is_invalid_state(remote_url: str, home: Path, text: str):
+    from gitswarm.errors import InvalidState
+
+    hive = Hive.init(remote_url, home)
+    (hive.path / "hive.toml").write_text(text)
+    with pytest.raises(InvalidState, match=r"hive\.toml is corrupt"):
+        Hive.open(remote_url, home)
