@@ -68,7 +68,7 @@ def workspace_create(
     """base 에서 격리 workspace 브랜치를 만든다. checkout=True 면 로컬 worktree 경로도 준다.
 
     base_ref 를 생략하면 원격 HEAD 가 가리키는 브랜치다. hive 가 없으면 먼저 만든다(멱등).
-    ttl_s 는 초 단위(0 = 만료 없음). Returns {ok, id, branch, base_oid, path, token, remote}
+    ttl_s 는 초 단위(0 = 만료 없음). Returns {ok, id, branch, branch_name, base_oid, path, token, clone, remote}
     (path 은 checkout=True 일 때만). On failure returns {ok: false, error: {kind, detail}}.
     """
     agent = agent_dict(agent_name, agent_run)
@@ -82,7 +82,7 @@ def workspace_create(
 @mcp.tool
 @payload
 def workspace_get(ws_id: str, remote: str | None = None) -> dict:
-    """workspace 메타를 읽는다. Returns {ok, id, branch, state, agent, parent, labels, ...}. On failure returns {ok: false, error: {kind, detail}}."""
+    """workspace 메타를 읽는다. Returns {ok, id, branch, state, agent, parent, labels, ..., remote}. On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, svc.get(ws_id).to_dict())
 
@@ -90,7 +90,7 @@ def workspace_get(ws_id: str, remote: str | None = None) -> dict:
 @mcp.tool
 @payload
 def workspace_list(remote: str | None = None, state: str | None = None) -> dict:
-    """workspace 목록. state = open|published|dropped. Returns {ok, workspaces: [meta, ...], invalid: [{id, detail}, ...]} (invalid = 읽을 수 없는 레코드, workspace_drop 으로 거둔다). On failure returns {ok: false, error: {kind, detail}}."""
+    """workspace 목록. state = open|published|dropped. Returns {ok, workspaces: [meta, ...], invalid: [{id, detail}, ...], remote} (invalid = 읽을 수 없는 레코드, workspace_drop 으로 거둔다). On failure returns {ok: false, error: {kind, detail}}."""
     flt = parse_state(state)
     svc = service(remote)
     good, invalid = svc.list_report(flt)
@@ -102,7 +102,7 @@ def workspace_list(remote: str | None = None, state: str | None = None) -> dict:
 def workspace_read_file(ws_id: str, path: str, remote: str | None = None) -> dict:
     """체크아웃 없이 발행된 파일을 읽는다.
 
-    Returns {ok, path, content} (UTF-8 텍스트) 또는 {ok, path, content_b64} (이진). On failure returns {ok: false, error: {kind, detail}}.
+    Returns {ok, path, content, remote} (UTF-8 텍스트) 또는 {ok, path, content_b64, remote} (이진). On failure returns {ok: false, error: {kind, detail}}.
     """
     svc = service(remote)
     return with_remote(svc, read_payload(path, svc.read(ws_id, path)))
@@ -111,7 +111,7 @@ def workspace_read_file(ws_id: str, path: str, remote: str | None = None) -> dic
 @mcp.tool
 @payload
 def workspace_tree(ws_id: str, path: str = "", remote: str | None = None) -> dict:
-    """디렉터리 한 단계를 나열한다. Returns {ok, path, entries}. On failure returns {ok: false, error: {kind, detail}}."""
+    """디렉터리 한 단계를 나열한다. Returns {ok, path, entries, remote}. On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, {"path": path, "entries": svc.tree(ws_id, path)})
 
@@ -119,7 +119,7 @@ def workspace_tree(ws_id: str, path: str = "", remote: str | None = None) -> dic
 @mcp.tool
 @payload
 def workspace_publish(ws_id: str, remote: str | None = None) -> dict:
-    """workspace 의 원격 브랜치 tip 을 발행 결과로 기록한다. 로컬 worktree 가 있으면 그 커밋을 먼저 push 하고, 없으면 다른 호스트가 push 한 tip 을 기록한다(base 그대로면 InvalidState). Returns {ok, id, oid} — oid = 기록한 tip. On failure returns {ok: false, error: {kind, detail}}."""
+    """workspace 의 원격 브랜치 tip 을 발행 결과로 기록한다. 로컬 worktree 가 있으면 그 커밋을 먼저 push 하고, 없으면 다른 호스트가 push 한 tip 을 기록한다(base 그대로면 InvalidState). Returns {ok, id, oid, remote} — oid = 기록한 tip. On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, {"id": ws_id, "oid": svc.publish(ws_id)})
 
@@ -127,7 +127,7 @@ def workspace_publish(ws_id: str, remote: str | None = None) -> dict:
 @mcp.tool
 @payload
 def workspace_drop(ws_id: str, remote: str | None = None) -> dict:
-    """브랜치·worktree·토큰을 거두고 dropped 로 표시한다. 멱등. Returns {ok, id, state, ...}. On failure returns {ok: false, error: {kind, detail}}."""
+    """브랜치·worktree·토큰을 거두고 dropped 로 표시한다. 멱등. Returns {ok, id, state, ..., remote}. On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, svc.drop(ws_id).to_dict())
 
@@ -135,7 +135,7 @@ def workspace_drop(ws_id: str, remote: str | None = None) -> dict:
 @mcp.tool
 @payload
 def workspace_gc(remote: str | None = None) -> dict:
-    """ttl 이 지난 open workspace 를 drop 한다. Returns {ok, expired: [ws id, ...], invalid: [{id, detail}, ...], conflicted: [ws id, ...]} (invalid = 건너뛴 망가진 레코드, conflicted = 본 뒤 남이 push 해 건너뛴 브랜치; 둘 다 workspace_drop 으로 거둔다). On failure returns {ok: false, error: {kind, detail}}."""
+    """ttl 이 지난 open workspace 를 drop 한다. Returns {ok, expired: [ws id, ...], invalid: [{id, detail}, ...], conflicted: [ws id, ...], remote} (invalid = 건너뛴 망가진 레코드, conflicted = 본 뒤 남이 push 해 건너뛴 브랜치; 둘 다 workspace_drop 으로 거둔다). On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, svc.gc())
 
@@ -143,7 +143,7 @@ def workspace_gc(remote: str | None = None) -> dict:
 @mcp.tool
 @payload
 def events_tail(remote: str | None = None, since: str | None = None) -> dict:
-    """meta 로그를 이벤트로 돌려준다(최신순). since = 마지막으로 본 oid. Returns {events: [...]}. On failure returns {ok: false, error: {kind, detail}}."""
+    """meta 로그를 이벤트로 돌려준다(최신순). since = 마지막으로 본 oid. Returns {ok, events: [...], remote}. On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, {"events": [e.to_dict() for e in svc.events(since)]})
 

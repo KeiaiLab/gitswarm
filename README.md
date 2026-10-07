@@ -12,7 +12,7 @@ workspace 를 만들고, 체크아웃 없이 읽고, 발행하고, 거둔다. �
 
     cd repo                                 # origin 이 있는 클론 안이면 원격을 찾는다
     # export GITSWARM_REMOTE=ssh://git@host/org/repo.git   # 레포 밖이면 이것(또는 --remote)
-    gitswarm ws create --agent impl --checkout             # --base 기본 = 원격 HEAD
+    gitswarm ws create --agent impl --checkout             # --base 기본 = 원격 HEAD(주면 왕복 1회 절감)
     #  → {"ok": true, "id": "01J…", "branch_name": "gitswarm/ws/01J…", "path": "…/wt/01J…",
     #     "clone": "git clone -b gitswarm/ws/01J… ssh://…", "remote": "ssh://…", …}
     gitswarm ws tree 01J… [path]
@@ -108,13 +108,12 @@ fail-closed 한다. `ws drop` 은 그 workspace 브랜치의 발행 안 된 원�
 ```
 uv sync --dev
 uv run ruff check src scripts tests
-uv run vulture src --min-confidence 60 --ignore-names "hive_init,ws_*,workspace_*,events_tail,mcp_serve,main,branch_name,doctor,stats"
+uv run vulture src --min-confidence 60 --ignore-names "hive_init,ws_*,workspace_*,events_tail,mcp_serve,main,doctor,stats"
 uv run pytest -q --cov
 ```
 
 죽은 코드 0 · 커버리지 100%(`fail_under = 100`)가 CI 게이트다. vulture 허용 이름은 typer·fastmcp
-데코레이터가 등록하는 진입점과 console script `main`, asdict 로만 읽히는
-`CreateResult.branch_name` 뿐이다.
+데코레이터가 등록하는 진입점과 console script `main` 뿐이다.
 
 ## 성능 / Performance
 

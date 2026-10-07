@@ -210,14 +210,18 @@ class Workspace:
 class CreateResult:
     id: str
     branch: str
-    branch_name: str  # clone·checkout 이 받는 짧은 이름: gitswarm/ws/<id>
     base_oid: str
     path: str | None
     token: str | None
     clone: str  # 다른 호스트가 그대로 실행할 명령
 
+    @property
+    def branch_name(self) -> str:
+        """clone·checkout 이 받는 짧은 이름: gitswarm/ws/<id>."""
+        return ws_branch(self.id)
+
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {**asdict(self), "branch_name": self.branch_name}
 
 
 def _full_ref(ref: str) -> str:
@@ -400,12 +404,10 @@ class WorkspaceService:
             wt = self.hive.worktree_dir(ws_id)
             self.hive.git.worktree_add(wt, ws_branch(ws_id))
             path = str(wt)
-        name = ws_branch(ws_id)
-        clone = f"git clone -b {name} {shlex.quote(self.hive.url)}"
+        clone = f"git clone -b {ws_branch(ws_id)} {shlex.quote(self.hive.url)}"
         return CreateResult(
             id=ws_id,
             branch=branch,
-            branch_name=name,
             base_oid=base_oid,
             path=path,
             token=token[1] if token else None,
