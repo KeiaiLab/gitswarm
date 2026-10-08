@@ -84,7 +84,7 @@ def workspace_create(
 @payload
 def workspace_get(ws_id: str, remote: str | None = None) -> dict:
     """Show a workspace record. Returns {ok, id, branch, state, agent, parent, labels, ..., remote}. On failure returns {ok: false, error: {kind, detail}}."""
-    svc = service(remote)
+    svc = service(remote, ws_id)
     return with_remote(svc, svc.get(ws_id).to_dict())
 
 
@@ -105,7 +105,7 @@ def workspace_read_file(ws_id: str, path: str, remote: str | None = None) -> dic
 
     Returns {ok, path, content, remote} (UTF-8 text) or {ok, path, content_b64, remote} (binary). On failure returns {ok: false, error: {kind, detail}}.
     """
-    svc = service(remote)
+    svc = service(remote, ws_id)
     return with_remote(svc, read_payload(path, svc.read(ws_id, path)))
 
 
@@ -113,7 +113,7 @@ def workspace_read_file(ws_id: str, path: str, remote: str | None = None) -> dic
 @payload
 def workspace_tree(ws_id: str, path: str = "", remote: str | None = None) -> dict:
     """List one directory level at the workspace's remote branch tip (path "" = root). Returns {ok, path, entries: [{name, kind, oid}], remote}. On failure returns {ok: false, error: {kind, detail}}."""
-    svc = service(remote)
+    svc = service(remote, ws_id)
     return with_remote(svc, {"path": path, "entries": svc.tree(ws_id, path)})
 
 
@@ -121,7 +121,7 @@ def workspace_tree(ws_id: str, path: str = "", remote: str | None = None) -> dic
 @payload
 def workspace_publish(ws_id: str, remote: str | None = None) -> dict:
     """Record the branch tip as published. Pushes the local worktree first if there is one; otherwise records the tip another host pushed (InvalidState if it is still at base). Returns {ok, id, oid, remote}; oid = the recorded tip. On failure returns {ok: false, error: {kind, detail}}."""
-    svc = service(remote)
+    svc = service(remote, ws_id)
     return with_remote(svc, {"id": ws_id, "oid": svc.publish(ws_id)})
 
 
@@ -129,7 +129,7 @@ def workspace_publish(ws_id: str, remote: str | None = None) -> dict:
 @payload
 def workspace_drop(ws_id: str, remote: str | None = None) -> dict:
     """Delete the branch, worktree and token; mark dropped. Idempotent. Returns {ok, id, state, ..., remote}. On failure returns {ok: false, error: {kind, detail}}."""
-    svc = service(remote)
+    svc = service(remote, ws_id)
     return with_remote(svc, svc.drop(ws_id).to_dict())
 
 

@@ -69,3 +69,16 @@ def test_discovered_option_shaped_origin_is_invalid(tmp_path: Path, home: Path):
     git("remote", "add", "--", "origin", "--upload-pack=x", cwd=repo)
     with pytest.raises(InvalidState):
         discover_remote(repo, home)
+
+
+@pytest.mark.parametrize("ws_id", [None, "../wt", "*", "01J0000000000000000000000Z"])
+def test_ws_id_that_names_no_worktree_is_none(remote_url: str, home: Path, tmp_path, ws_id):
+    _worktree(remote_url, home)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert discover_remote(empty, home, ws_id) is None
+
+
+def test_ws_id_names_the_hive_holding_its_worktree(remote_url: str, home: Path, tmp_path):
+    ws_id = _worktree(remote_url, home).name
+    assert discover_remote(tmp_path, home, ws_id) == remote_url

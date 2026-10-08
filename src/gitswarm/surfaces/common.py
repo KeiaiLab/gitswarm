@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from gitswarm.service.discovery import discover_remote
+from gitswarm.service.discovery import AmbiguousRemoteError, discover_remote
 from gitswarm.service.doctor import diagnose
 from gitswarm.service.workspace import WorkspaceService, WsState, open_service
 from gitswarm.store.hive import resolve_home
@@ -50,16 +50,19 @@ def parse_state(state: str | None) -> WsState | None:
         ) from None
 
 
-def find_remote(remote: str | None) -> str | None:
-    """주어진 원격, 없으면 cwd 로 찾은 원격. 허용 목록 밖이면 InvalidState(사용법 오류가 아니라 거절)."""
+def find_remote(remote: str | None, ws_id: str | None = None) -> str | None:
+    """주어진 원격, 없으면 cwd(와 ws_id)로 찾은 원격. 허용 목록 밖이면 InvalidState(사용법 오류가 아니라 거절)."""
     if remote:
         return validate_remote_url(remote)
-    return discover_remote(Path.cwd(), resolve_home())
+    try:
+        return discover_remote(Path.cwd(), resolve_home(), ws_id)
+    except AmbiguousRemoteError as e:
+        raise UsageError(str(e)) from None
 
 
-def resolve_remote(remote: str | None) -> str:
+def resolve_remote(remote: str | None, ws_id: str | None = None) -> str:
     """find_remote 인데 못 찾으면 Usage."""
-    found = find_remote(remote)
+    found = find_remote(remote, ws_id)
     if found is None:
         raise UsageError(NO_REMOTE)
     return found
@@ -72,8 +75,8 @@ def doctor_report(remote: str | None) -> dict:
     return {**report, "remote": found} if found else report
 
 
-def service(remote: str | None) -> WorkspaceService:
-    return open_service(resolve_remote(remote), resolve_home())
+def service(remote: str | None, ws_id: str | None = None) -> WorkspaceService:
+    return open_service(resolve_remote(remote, ws_id), resolve_home())
 
 
 def with_remote(svc: WorkspaceService, payload: dict) -> dict:

@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from gitswarm.constants import meta_path
 from gitswarm.service.workspace import Checkout, open_service
+from gitswarm.store.hive import hive_path
 from gitswarm.store.meta import Change
 from gitswarm.surfaces import cli
 from gitswarm.surfaces.cli import app, main
@@ -542,3 +543,33 @@ def test_bad_config_is_one_json_line(remote_url: str, home: Path, text: str, cau
     err = json.loads(lines[0])["error"]
     assert err["kind"] == "InvalidState"
     assert err["detail"].startswith(f"config.toml: {cause}: ")
+
+
+def test_ws_id_names_its_hive_outside_the_worktree(inited: str, home: Path):
+    # cwd 는 tmp_path(레포 아님), env 없음 — wt/<id> 를 가진 hive 하나가 원격을 정한다
+    _, out = run("ws", "create", "--base", "main", "--checkout", remote=inited)
+    ws_id, wt = out["id"], Path(out["path"])
+    (wt / "n.txt").write_text("n\n")
+    git("add", "n.txt", cwd=wt)
+    git("commit", "-q", "-m", "n", cwd=wt)
+
+    code, got = run_here("ws", "publish", ws_id)
+    assert code == 0 and got["id"] == ws_id and got["remote"] == inited
+
+
+def test_unknown_ws_id_outside_repo_is_usage(inited: str, home: Path):
+    code, got = run_here("ws", "get", "01J0000000000000000000000Z")
+    assert code == 1 and got["error"]["kind"] == "Usage"
+    assert "--remote" in got["error"]["detail"]
+
+
+def test_ws_id_in_two_hives_is_usage(inited: str, home: Path, tmp_path: Path):
+    _, out = run("ws", "create", "--base", "main", "--checkout", remote=inited)
+    other = tmp_path / "other.git"
+    git("init", "-q", "--bare", str(other), cwd=tmp_path)
+    run("hive", "init", other.as_uri(), remote=other.as_uri())
+    (hive_path(other.as_uri(), home) / "wt" / out["id"]).mkdir()
+
+    code, got = run_here("ws", "get", out["id"])
+    assert code == 1 and got["error"]["kind"] == "Usage"
+    assert f"workspace {out['id']} found in 2 hives; pass --remote" == got["error"]["detail"]

@@ -255,3 +255,9 @@ def test_tool_descriptions_are_english():
 def test_refused_url_is_redacted_in_payload():
     out = call("workspace_list", remote="https://bot:s3cret@host/r")
     assert out["ok"] is False and "s3cret" not in str(out) and "***@host/r" in str(out)
+
+
+def test_ws_id_names_its_hive_without_remote(remote_url: str, home: Path):
+    out = call("workspace_create", remote=remote_url, base_ref="main", checkout=True)
+    got = call("workspace_get", ws_id=out["id"])
+    assert got["ok"] is True and got["remote"] == remote_url

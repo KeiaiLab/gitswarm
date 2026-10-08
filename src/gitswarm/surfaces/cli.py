@@ -129,7 +129,7 @@ def ws_create(
 @ws_app.command("get", help="Show a workspace record.")
 @guarded
 def ws_get(ws_id: WsIdArg, remote: RemoteOpt = None) -> None:
-    svc = service(remote)
+    svc = service(remote, ws_id)
     _emit(with_remote(svc, svc.get(ws_id).to_dict()))
 
 
@@ -153,7 +153,7 @@ def ws_read(
     path: Annotated[str, typer.Argument(help="File path in the workspace.")],
     remote: RemoteOpt = None,
 ) -> None:
-    svc = service(remote)
+    svc = service(remote, ws_id)
     _emit(with_remote(svc, read_payload(path, svc.read(ws_id, path))))
 
 
@@ -164,7 +164,7 @@ def ws_tree(
     path: Annotated[str, typer.Argument(help="Directory. Default: the root.")] = "",
     remote: RemoteOpt = None,
 ) -> None:
-    svc = service(remote)
+    svc = service(remote, ws_id)
     _emit(with_remote(svc, {"path": path, "entries": svc.tree(ws_id, path)}))
 
 
@@ -174,14 +174,14 @@ def ws_tree(
 )
 @guarded
 def ws_publish(ws_id: WsIdArg, remote: RemoteOpt = None) -> None:
-    svc = service(remote)
+    svc = service(remote, ws_id)
     _emit(with_remote(svc, {"id": ws_id, "oid": svc.publish(ws_id)}))
 
 
 @ws_app.command("drop", help="Delete the branch, worktree and token; mark dropped. Idempotent.")
 @guarded
 def ws_drop(ws_id: WsIdArg, remote: RemoteOpt = None) -> None:
-    svc = service(remote)
+    svc = service(remote, ws_id)
     _emit(with_remote(svc, svc.drop(ws_id).to_dict()))
 
 

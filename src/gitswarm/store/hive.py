@@ -77,6 +77,15 @@ def worktree_owner(path: Path, home: Path) -> str | None:
     return None
 
 
+def worktree_hives(ws_id: str, home: Path) -> list[str]:
+    """wt/<ws_id> 디렉터리를 가진 hive 들의 URL. ws_id 는 호출자가 검증한 ULID 다."""
+    return [
+        _stored_url(hive_file)
+        for hive_file in sorted((home / HIVES_DIR).glob(f"*/{HIVE_FILE}"))
+        if (hive_file.parent / WT_DIR / ws_id).is_dir()
+    ]
+
+
 def _build(at: Path, url: str) -> None:
     """at 에 hive 하나를 다 짓는다. 원격이 안 닿으면 RemoteError."""
     git = Git.init_bare(at / REPO_DIR)
