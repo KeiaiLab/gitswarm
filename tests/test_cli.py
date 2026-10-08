@@ -575,3 +575,15 @@ def test_ws_id_in_two_hives_is_usage(inited: str, home: Path, tmp_path: Path):
     code, got = run_here("ws", "get", out["id"])
     assert code == 1 and got["error"]["kind"] == "Usage"
     assert f"workspace {out['id']} found in 2 hives; pass --remote" == got["error"]["detail"]
+
+
+def test_inherited_repo_env_does_not_break_the_first_create(
+    remote_url: str, home: Path, tmp_path: Path, monkeypatch
+):
+    # 새 홈의 첫 명령은 hive 를 짓는다(init_bare) — 그 git 도 호출자 env 를 걸러야 한다
+    monkeypatch.setenv("GIT_WORK_TREE", str(tmp_path / "other"))
+    monkeypatch.setenv("GIT_OBJECT_DIRECTORY", str(tmp_path / "objx"))
+
+    code, out = run("ws", "create", "--base", "main", "--checkout", remote=remote_url)
+    assert code == 0 and out["ok"] is True, out
+    assert not (tmp_path / "objx").exists()

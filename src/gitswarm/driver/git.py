@@ -59,6 +59,11 @@ REPO_LOCATING_ENVS = (
 )
 
 
+def _child_env() -> dict[str, str]:
+    """git 자식 프로세스의 바탕 env — 호출자 env 에서 레포 자리 변수만 뺀 것. 모든 git 호출이 쓴다."""
+    return {k: v for k, v in os.environ.items() if k not in REPO_LOCATING_ENVS}
+
+
 def is_lease_rejection(stderr: str) -> bool:
     """push stderr 가 lease 거절(재시도 대상)인지. 훅 거절·권한 오류는 아니다."""
     return any(marker in stderr for marker in REJECTED_MARKERS)
@@ -131,9 +136,8 @@ class Git:
         data: bytes | None = None,
         ok_rc: tuple[int, ...] = (0,),
     ) -> subprocess.CompletedProcess:
-        inherited = {k: v for k, v in os.environ.items() if k not in REPO_LOCATING_ENVS}
         env = {
-            **inherited,
+            **_child_env(),
             "GIT_AUTHOR_NAME": COMMIT_AUTHOR,
             "GIT_AUTHOR_EMAIL": COMMIT_EMAIL,
             "GIT_COMMITTER_NAME": COMMIT_AUTHOR,
@@ -224,7 +228,9 @@ class Git:
     def version() -> str:
         """`git --version` 의 판본 낱말(예: "2.55.0"). git 을 못 돌리면 RemoteError."""
         try:
-            p = subprocess.run(["git", "--version"], capture_output=True, check=True)
+            p = subprocess.run(
+                ["git", "--version"], env=_child_env(), capture_output=True, check=True
+            )
         except (OSError, subprocess.CalledProcessError) as e:
             raise RemoteError(f"git not runnable: {type(e).__name__}") from None
         # "git version 2.39.3 (Apple Git-146)" — 셋째 낱말
@@ -236,6 +242,7 @@ class Git:
         try:
             subprocess.run(
                 ["git", "init", "--bare", "-q", "--", str(path)],
+                env=_child_env(),
                 check=True,
                 capture_output=True,
             )
