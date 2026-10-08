@@ -449,8 +449,8 @@ git does not have.
 - `pre-receive` hooks cover the "hook decline stays a hard error" case.
 - CLI: typer `CliRunner` and direct `main()` calls. MCP: in-process fastmcp
   client. Forgejo and GitHub: `respx`.
-- Gates: `pytest --cov` with `fail_under = 100`, ruff, vulture. 543 tests at
-  the time of writing.
+- Gates: `pytest --cov` with `fail_under = 100`, ruff, vulture, over the
+  whole suite.
 - Not tested: a real two-host race over a network. It is simulated by
   forcing the interleaving of two writers against one remote; the CAS
   depends only on the remote's ref update being atomic.

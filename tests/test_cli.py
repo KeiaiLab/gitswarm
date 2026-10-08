@@ -532,11 +532,13 @@ def test_inherited_git_dir_does_not_redirect_hive_commands(
         ('[remote."x"]\nadapter = "forgejo"\nbogus = 1\n', "TypeError"),
         ("[remote]\nadapter = 1\n", "TypeError"),
         ("not toml ===\n", "TOMLDecodeError"),
+        ('[remote]\nadapter = "caf\xe9"\n', "UnicodeDecodeError"),
     ],
-    ids=["unknown-key", "wrong-type", "unparsable"],
+    ids=["unknown-key", "wrong-type", "unparsable", "not-utf8"],
 )
 def test_bad_config_is_one_json_line(remote_url: str, home: Path, text: str, cause: str):
-    (home / "config.toml").write_text(text)
+    # latin-1 로 쓴다 — "not-utf8" 의 é 는 UTF-8 이 아닌 바이트 0xE9 하나가 된다
+    (home / "config.toml").write_bytes(text.encode("latin-1"))
     res = runner.invoke(app, ["ws", "list"], env={"GITSWARM_REMOTE": remote_url})
     lines = res.stdout.strip().splitlines()
     assert res.exit_code == 4 and len(lines) == 1, res.output
