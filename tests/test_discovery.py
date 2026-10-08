@@ -82,3 +82,16 @@ def test_ws_id_that_names_no_worktree_is_none(remote_url: str, home: Path, tmp_p
 def test_ws_id_names_the_hive_holding_its_worktree(remote_url: str, home: Path, tmp_path):
     ws_id = _worktree(remote_url, home).name
     assert discover_remote(tmp_path, home, ws_id) == remote_url
+
+
+def test_cwd_wins_over_the_ws_id_rule(remote_url: str, home: Path, tmp_path: Path):
+    # 규칙 순서: cwd(origin) 가 먼저다 — wt/<id> 가 다른 hive 에만 있어도 clone 의 원격이다
+    other = tmp_path / "other.git"
+    git("init", "-q", "--bare", str(other), cwd=tmp_path)
+    ws_id = "01J0000000000000000000000Z"
+    (Hive.init(other.as_uri(), home).path / "wt" / ws_id).mkdir()
+    clone = tmp_path / "clone"
+    git("clone", "-q", remote_url, str(clone), cwd=tmp_path)
+
+    assert discover_remote(clone, home, ws_id) == remote_url
+    assert discover_remote(tmp_path, home, ws_id) == other.as_uri()
