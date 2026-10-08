@@ -58,6 +58,37 @@ def test_ref_helpers_reject_non_branch_refs(fn):
 
 
 # ── record forgery ───────────────────────────────────────────
+# 가드마다 그 가드만 틀린 레코드 하나 — 다른 가드가 먼저 걸리면 그 가드를 지워도 시험이 산다
+def test_forged_branch_aimed_at_live_workspace_fails_closed(svc: WorkspaceService):
+    victim = _create(svc)
+    _write(svc, FORGED_ID, _with(FORGED_ID, branch=victim.branch))
+    with pytest.raises(InvalidState, match="stored branch"):
+        svc.get(FORGED_ID)
+    with pytest.raises(InvalidState, match="stored branch"):
+        svc.drop(FORGED_ID)
+    assert svc.hive.git.ls_remote(victim.branch) == victim.base_oid
+    assert svc.get(victim.id).state is WsState.OPEN
+
+
+@pytest.mark.parametrize(
+    "field,value,detail",
+    [
+        ("parent", "not-a-ulid", "invalid parent"),
+        ("token_id", "../x", "invalid token id"),
+        ("published_oid", "zz", "published_oid"),
+        ("created_at", "2026-01-01T00:00:00", "has no timezone"),
+        ("ttl_s", -1, "invalid ttl_s"),
+        ("ttl_s", 365 * 24 * 3600 + 1, "invalid ttl_s"),
+    ],
+    ids=["parent", "token_id", "published_oid", "naive-created_at", "ttl-neg", "ttl-max"],
+)
+def test_single_bad_field_fails_closed(svc: WorkspaceService, field, value, detail):
+    Workspace.from_json(_with(FORGED_ID))  # 나머지는 멀쩡하다
+    _write(svc, FORGED_ID, _with(FORGED_ID, **{field: value}))
+    with pytest.raises(InvalidState, match=detail):
+        svc.get(FORGED_ID)
+
+
 def test_get_rejects_record_whose_id_is_not_a_ulid(svc: WorkspaceService):
     body = json.dumps(
         {"id": "nope", "state": "open", "base_ref": "r", "base_oid": "o", "branch": "b"}
