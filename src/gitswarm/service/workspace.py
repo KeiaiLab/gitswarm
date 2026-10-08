@@ -68,6 +68,9 @@ from gitswarm.store.meta import Change, MetaStore
 RECORD_PATH_RE = re.compile(rf"{WS_DIR}/[0-9A-HJKMNP-TV-Z]{{26}}\.json")  # fullmatch 로만
 UNEXPECTED_PATH = "unexpected meta path"
 OID_RE = re.compile(r"^[0-9a-f]{40}$")
+REFS = "refs/"
+# --base 이름에 오면 안 되는 것: glob(fetch refspec 이 펼친다)·공백·제어 문자·".."·앞 "-"
+BAD_BRANCH_RE = re.compile(r"[*?\[\s\x00-\x1f\x7f]|\.\.|^-")
 
 # 두 publish 경로가 같은 판정, 다음 행동만 다르다
 NOTHING_PUBLISHED = "nothing published: branch is still at base"
@@ -306,8 +309,16 @@ class CreateResult:
         return {**asdict(self), "branch_name": self.branch_name}
 
 
-def _full_ref(ref: str) -> str:
-    return ref if ref.startswith("refs/") else HEADS + ref
+def _branch_ref(ref: str) -> str:
+    """--base → refs/heads/<name>. 브랜치 이름이 아니면(다른 refs/·glob·제어 문자) fetch 전에 NotFound.
+
+    예: "main" → "refs/heads/main", "refs/tags/v1"·"refs/heads/*" → NotFound
+    """
+    full = ref if ref.startswith(REFS) else HEADS + ref
+    name = full.removeprefix(HEADS)
+    if full == name or not name or BAD_BRANCH_RE.search(name):
+        raise NotFound(f"base {_shown(ref)} is not a branch ref; pass a branch name as --base")
+    return full
 
 
 def _parse_record(ws_id: str, data: bytes) -> Workspace:
@@ -499,7 +510,7 @@ class WorkspaceService:
         # 기록할 수 없는 텍스트는 원격에 아무것도 만들기 전에 거른다
         _check_text(BAD_CREATE, [base_ref], {"agent": agent, "labels": labels})
         parent = self.get(from_ws) if from_ws else None
-        src_ref = parent.branch if parent else _full_ref(base_ref)
+        src_ref = parent.branch if parent else _branch_ref(base_ref)
         # peek: oid 만 필요하다 — tracking 을 옮기면 부모의 발행 기준이 남의 커밋으로 바뀐다
         base_oid = self.hive.git.peek(src_ref)
         if base_oid is None:
@@ -524,7 +535,7 @@ class WorkspaceService:
             ws = Workspace(
                 id=ws_id,
                 state=WsState.OPEN,
-                base_ref=_full_ref(base_ref) if not parent else parent.branch,
+                base_ref=src_ref,
                 base_oid=base_oid,
                 branch=branch,
                 agent=agent,

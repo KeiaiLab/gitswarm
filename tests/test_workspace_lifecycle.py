@@ -23,8 +23,8 @@ from gitswarm.service.workspace import (
 )
 from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
+from tests.conftest import count_network, ls_remote_prefix
 from tests.conftest import git as git_cli
-from tests.conftest import ls_remote_prefix
 
 
 @pytest.fixture
@@ -64,6 +64,37 @@ def test_create_unknown_base_is_not_found(svc: WorkspaceService):
     with pytest.raises(NotFound):
         svc.create("nope", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
     assert svc.list(None) == []
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        "refs/tags/v1",
+        "refs/heads/*",
+        "ma?n",
+        "ma[i]n",
+        "ma in",
+        "a..b",
+        "-main",
+        "refs/heads/-main",
+        "ma\tin",
+        "ma\x01in",
+        "refs/heads/",
+    ],
+)
+def test_create_rejects_non_branch_base_before_fetch(
+    svc: WorkspaceService, monkeypatch: pytest.MonkeyPatch, base: str
+):
+    calls = count_network(monkeypatch)
+    with pytest.raises(NotFound, match="not a branch ref"):
+        svc.create(base, {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
+    assert calls == []
+
+
+@pytest.mark.parametrize("base", ["main", "refs/heads/main"])
+def test_create_accepts_branch_name_or_full_ref(svc: WorkspaceService, base: str):
+    r = svc.create(base, {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
+    assert svc.get(r.id).base_ref == "refs/heads/main"
 
 
 def test_list_filters_by_state(svc: WorkspaceService):

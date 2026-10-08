@@ -244,6 +244,14 @@ def test_hostile_meta_stays_out_of_output(inited: str, home: Path):
     assert len(out["invalid"][0]["detail"]) < SHORT
 
 
+@pytest.mark.parametrize("base", ["refs/tags/v1", "refs/heads/*"])
+def test_create_with_non_branch_base_exits_2(inited: str, base: str):
+    res = runner.invoke(app, ["ws", "create", "--base", base], env={"GITSWARM_REMOTE": inited})
+    lines = res.stdout.strip().splitlines()
+    assert res.exit_code == 2 and len(lines) == 1
+    assert json.loads(lines[0])["error"]["kind"] == "NotFound"
+
+
 def test_events_tail_bad_since_exits_2(inited: str):
     code, out = run("events", "tail", "--since", "bogus", remote=inited)
     assert code == 2 and out["error"]["kind"] == "NotFound"
