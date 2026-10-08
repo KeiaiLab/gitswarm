@@ -88,6 +88,8 @@ BLOB_MODE = "100644"
 TREE_MODE = "040000"
 NUL = "\x00"
 NULL_OID = "0000000000000000000000000000000000000000"
+# bare 레포는 기본으로 reflog 를 남기지 않는다 — 지워진 worktree 의 커밋을 되살릴 자리
+LOG_ALL_REF_UPDATES = ("core.logAllRefUpdates", "true")
 
 
 @dataclass(frozen=True)
@@ -227,7 +229,9 @@ class Git:
             # JSON 계약 — 날 traceback 대신 오류 종류로
             detail = e.stderr.decode(errors="replace").strip() if e.stderr else ""
             raise RemoteError(detail or f"git init rc={e.returncode}") from None
-        return cls(path)
+        git = cls(path)
+        git._run("config", *LOG_ALL_REF_UPDATES)
+        return git
 
     def set_origin(self, url: str) -> None:
         self._run("remote", "add", "--", "origin", url)
@@ -450,6 +454,14 @@ class Git:
 
     def delete_ref(self, ref: str) -> None:
         self._run("update-ref", "-d", ref)
+
+    def keep(self, ref: str, oid: str, reason: str) -> None:
+        """ref 를 oid 로 옮기며 reflog 에 reason 을 남긴다(reflog 가 없으면 만든다)."""
+        self._run("update-ref", "--create-reflog", "-m", reason, ref, oid)
+
+    def is_dirty(self) -> bool:
+        """worktree 에 커밋 안 된 변경·추적 안 된 파일이 있는가."""
+        return bool(self._out("status", "--porcelain"))
 
     def worktree_add(self, path: Path, branch: str) -> None:
         self._run("worktree", "add", "-q", str(path), branch)

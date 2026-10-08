@@ -7,6 +7,8 @@ HEADS = "refs/heads/"
 TRACKING = "refs/remotes/origin/"
 PEEK = "refs/gitswarm/peek/"
 LEASE = "refs/gitswarm/lease/"
+# drop 이 지운 로컬 tip 을 reflog 로 남기는 자리 — ref 를 지우면 그 ref 의 reflog 도 사라진다
+TRASH_REF = "refs/gitswarm/trash"
 
 META_REF = f"{HEADS}{REF_PREFIX}meta"
 WS_DIR = "ws"  # meta 트리 안의 디렉터리: ws/<id>.json

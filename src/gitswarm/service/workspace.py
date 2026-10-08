@@ -27,6 +27,7 @@ from gitswarm.constants import (
     HEADS,
     MAX_TTL_S,
     TOKEN_ID_RE,
+    TRASH_REF,
     TTL_FOREVER,
     WS_DIR,
     lease_ref,
@@ -598,6 +599,10 @@ class WorkspaceService:
         )
 
     def _drop_as(self, ws: Workspace, kind: str, mode: LeaseMode) -> Workspace:
+        # 자동 회수는 이 호스트 worktree 의 push 안 된 작업을 지우지 않는다
+        if mode is LeaseMode.STRICT:
+            self._check_local_work(ws)
+
         # 원격 먼저, lease 로 — 실패하면 로컬도 그대로 둔다
         if not self._delete_branch(ws.branch, mode):
             raise Conflict(f"{ws.branch} moved on remote while dropping; not deleting")
@@ -630,10 +635,28 @@ class WorkspaceService:
             return False
         return git.delete_remote(branch, current)
 
+    def _check_local_work(self, ws: Workspace) -> None:
+        """worktree 의 HEAD 가 이 호스트가 본 원격 tip 이 아니거나 커밋 안 된 변경이 있으면 Conflict."""
+        wt = self.hive.worktree_dir(ws.id)
+        if not wt.exists():
+            return
+        local = Git(wt)
+        if local.rev_parse("HEAD") == self._seen(ws.branch) and not local.is_dirty():
+            return
+        raise Conflict(f"{ws.id} worktree has work not on the remote; not deleting")
+
     def _clear_local(self, ws_id: str, branch: str) -> None:
+        git = self.hive.git
         wt = self.hive.worktree_dir(ws_id)
+
+        # 지우기 전에 로컬 tip 을 reflog 에 남긴다 — 명시적 drop 도 되살릴 길은 둔다
+        tips = [git.rev_parse(branch)]
         if wt.exists():
-            self.hive.git.worktree_remove(wt)
+            tips.append(Git(wt).rev_parse("HEAD"))
+            git.worktree_remove(wt)
+        for oid in dict.fromkeys(t for t in tips if t):
+            git.keep(TRASH_REF, oid, f"drop {ws_id}")
+
         for ref in (branch, peek_ref(branch), lease_ref(branch)):
             if self.hive.git.exists(ref):
                 self.hive.git.delete_ref(ref)

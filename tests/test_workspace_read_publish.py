@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from gitswarm.adapters.plain import PlainAdapter
-from gitswarm.constants import lease_ref, meta_path, tracking_ref
+from gitswarm.constants import TRASH_REF, lease_ref, meta_path, tracking_ref
 from gitswarm.errors import Conflict, InvalidState, NotFound
 from gitswarm.service.workspace import Checkout, WorkspaceService, WsState
 from gitswarm.store.hive import Hive
@@ -437,3 +437,54 @@ def test_drop_keeps_published_oid(svc: WorkspaceService, tmp_path: Path):
     dropped = svc.drop(r.id)
     assert dropped.state is WsState.DROPPED and dropped.published_oid == tip
     assert svc.get(r.id).published_oid == tip
+
+
+# ── 로컬 작업 보호(gc 는 worktree 의 push 안 된 작업을 지우지 않는다) ─────────
+def _expired_with_worktree(remote_url: str, home: Path):
+    """ttl 60 s 짜리 worktree workspace 를 만들고 시계를 61 s 뒤로 돌린다."""
+    hive = Hive.init(remote_url, home)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    svc = WorkspaceService(hive, MetaStore(hive.git), PlainAdapter(), clock=lambda: now)
+    r = svc.create("main", {}, 60, None, Checkout.WORKTREE, {})
+    svc.clock = lambda: now + timedelta(seconds=61)
+    return svc, r
+
+
+def _assert_untouched(svc: WorkspaceService, r) -> None:
+    assert svc.gc() == {"expired": [], "invalid": [], "conflicted": [r.id]}
+    assert Path(r.path).exists()
+    assert svc.hive.git.ls_remote(r.branch) == r.base_oid
+    assert svc.hive.git.rev_parse(lease_ref(r.branch)) == r.base_oid
+    assert svc.get(r.id).state is WsState.OPEN
+
+
+def test_gc_keeps_worktree_with_unpushed_commit(remote_url: str, home: Path):
+    svc, r = _expired_with_worktree(remote_url, home)
+    mine = _commit_file(Path(r.path), "mine.txt", "y\n")
+    _assert_untouched(svc, r)
+    assert svc.hive.git.rev_parse(r.branch) == mine
+
+
+def test_gc_keeps_dirty_worktree(remote_url: str, home: Path):
+    svc, r = _expired_with_worktree(remote_url, home)
+    (Path(r.path) / "draft.txt").write_text("uncommitted\n")
+    _assert_untouched(svc, r)
+    assert (Path(r.path) / "draft.txt").exists()
+
+
+def test_gc_drops_clean_worktree_at_seen_tip(remote_url: str, home: Path):
+    svc, r = _expired_with_worktree(remote_url, home)
+    assert svc.gc() == {"expired": [r.id], "invalid": [], "conflicted": []}
+    assert not Path(r.path).exists()
+
+
+def test_drop_keeps_unpushed_commit_in_hive_reflog(svc: WorkspaceService):
+    r = svc.create("main", {}, 0, None, Checkout.WORKTREE, {})
+    mine = _commit_file(Path(r.path), "mine.txt", "y\n")
+    assert svc.drop(r.id).state is WsState.DROPPED
+    assert not Path(r.path).exists() and svc.hive.git.exists(r.branch) is False
+
+    # 명시적 drop 은 지운다 — 그래도 hive 의 reflog 로 되살릴 수 있다
+    log = git("reflog", "show", "--format=%H %gs", TRASH_REF, cwd=svc.hive.git.repo)
+    assert f"{mine} drop {r.id}" in log.splitlines()
+    assert git("config", "core.logAllRefUpdates", cwd=svc.hive.git.repo) == "true"
