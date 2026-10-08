@@ -66,8 +66,8 @@ Local hive (one per remote, `GITSWARM_HOME` or `~/.gitswarm`):
       refs/heads/gitswarm/ws/<id>           local branch (worktree target)
       refs/gitswarm/lease/gitswarm/ws/<id>  private publish/drop baseline
       refs/gitswarm/peek/gitswarm/ws/<id>   read-only lookups
+      .ssh-control/mux                      SSH ControlMaster socket (section 5)
     wt/<id>/                        worktree (create --checkout)
-    .ssh-control/mux                SSH ControlMaster socket (section 5)
 ```
 
 - `refs/heads/` is the one namespace every host accepts pushes to
@@ -76,6 +76,10 @@ Local hive (one per remote, `GITSWARM_HOME` or `~/.gitswarm`):
   by oid.
 - `lease/*` and `peek/*` mirror the full ref name under their prefix
   (`LEASE`, `PEEK`).
+- `Hive.open`, which every command passes, sweeps `hives/.tmp-*` dirs and
+  `hives/.lock-*` files older than `STALE_TMP_S` (3600 s; a lock in use is
+  touched, so it never looks stale) and runs `git worktree prune` once, so a
+  worktree deleted by hand loses its `repo.git/worktrees/<id>` entry.
 
 ## 4. The workspace record
 
@@ -121,7 +125,9 @@ record is therefore untrusted input. `Workspace.from_json` fails closed with
   without timezone
 
 `get` raises on a bad record. `list` and `gc` skip it and report it under
-`invalid: [{id, detail}]`, so one bad record does not stop everyone. A bad
+`invalid: [{id, detail}]`, and `events tail` and `stats` do the same for a
+bad meta commit (`invalid: [{oid, detail}]`), so one bad record does not
+stop everyone. A bad
 record is removed with `ws drop <id>` (force-drop, section 6).
 
 ## 5. The meta CAS
@@ -170,10 +176,11 @@ under a lease (publish, drop, gc), or a ULID already has a record. It never
 means a hook or permission failure.
 
 `create` compensates. The remote branch is pushed first (lease expecting the
-ref to be absent). Any later failure, including meta `Conflict`, runs
-`_undo_create`: delete remote branch, local ref, lease ref, revoke token.
-Each step is attempted even if the previous failed; the original exception
-is re-raised. No orphan branch without a record remains.
+ref to be absent). Any later failure, including meta `Conflict` and the
+worktree step of `--checkout`, runs `_undo_create`: delete remote branch,
+local ref, lease ref, worktree, revoke token. Each step is attempted even if
+the previous failed; the original exception is re-raised and its detail
+names the id. A failed create leaves no branch, record or worktree.
 
 ### Git traps and countermeasures
 
@@ -194,6 +201,13 @@ either case, so there is no window to close.
 Every git call runs with `LC_ALL=C`. The `Everything up-to-date`,
 `couldn't find remote ref` and rejection markers are English text; a
 translated git would break the classification.
+
+Every git call also drops the repository-locating variables a hook or CI
+job may export (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
+`GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
+`GIT_COMMON_DIR`, `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`): an absolute
+`GIT_DIR` beats `-C <hive>` and would send hive commands into the caller's
+repository. `GIT_SSH*`, `GIT_CONFIG_*` and the rest pass through.
 
 **2. Rejections have several wordings.** `REJECTED_MARKERS`:
 
@@ -249,13 +263,17 @@ That is safe because a hive holds exactly one remote.
 
 ### Round trips
 
-Network calls per operation (one `fetch`, `push` or delete each):
+Network calls per operation (one `fetch`, `push`, `ls-remote` or delete
+each), measured with the suite's `count_network`:
 
 | operation | calls |
 |---|---|
-| `create`, `publish`, `drop` | 4 |
+| `create` | 4 (5 when the base comes from the remote HEAD) |
+| `publish` | 4 |
+| `drop` | 4 (7 when the branch moved since this host saw it: the lease is rejected, one `ls-remote` with the 60 s timeout, then a delete with the new tip) |
 | `read`, `tree` | 2 |
-| `get`, `list`, `events tail`, `gc` | 1 |
+| `get`, `list`, `events tail` | 1 |
+| `gc` | 1, plus 3 per expired workspace |
 
 Local git processes do not grow with the record count either: `list` and
 `events tail` read every record with one `git cat-file --batch`
@@ -286,7 +304,9 @@ create-to-drop cycles and exits 1 when a command exceeds its budget
 
 **drop** (`-> dropped`, idempotent) deletes the remote branch, local refs
 (branch, peek, lease), the worktree, revokes the token, then records
-`ws.dropped`. A revoke that fails (`Unsupported`, `RemoteError`) prints one
+`ws.dropped`. Dropping a `dropped` record runs the same cleanup again, so a
+branch pushed after the drop, or a worktree left on another host, is
+removed by repeating `drop`. A revoke that fails (`Unsupported`, `RemoteError`) prints one
 stderr line and does not stop the drop; the record keeps its `token_id`, a
 successful revoke clears it. `stats.unrevoked_tokens` and the doctor check
 `tokens` count dropped records still holding one, and `drop` of such a
@@ -296,7 +316,7 @@ leased on the last seen oid (`_delete_branch`):
 | mode | used by | when the lease is rejected or no oid was seen |
 |---|---|---|
 | `LeaseMode.FOLLOW` | explicit `drop` | peek the current tip, delete once more with that lease. Dropping means "discard this workspace", others' pushes included |
-| `LeaseMode.STRICT` | `gc` | peek the current tip; stop with `Conflict` if it exists |
+| `LeaseMode.STRICT` | `gc` | peek the current tip; if it equals `base_oid`, delete with that lease (nothing beyond the base can be lost); otherwise stop with `Conflict` if it exists |
 
 A branch already gone counts as deleted, in both modes. A `drop` whose meta
 CAS lost after the branch was deleted leaves an `open` record without a
@@ -308,10 +328,18 @@ never expires). Result: `{expired, invalid, conflicted}`.
 - `expired`: ids dropped, recorded as `ws.expired`.
 - `invalid`: malformed records, or records whose transition failed
   (`NotFound`, `InvalidState`) mid-gc, skipped with the detail.
-- `conflicted`: branch moved after this host last saw it, skipped.
+- `conflicted`: skipped because the branch tip is neither the last tip this
+  host pushed or saw nor `base_oid`, or because the local worktree's `HEAD`
+  is ahead of that tip or the worktree is dirty.
 
-Rule: gc never deletes a commit this host has not seen. Both skipped
-classes are removed by an explicit `ws drop <id>`.
+Rule: gc never deletes a commit beyond the base that this host has not
+pushed or seen, and never removes a worktree with unpushed or uncommitted
+work. It therefore reclaims, from any host, an expired workspace nobody
+pushed to. Both skipped classes are removed by an explicit `ws drop <id>`.
+That drop does remove unpushed worktree commits, but the bare hive keeps
+reflogs (`core.logAllRefUpdates`):
+`git -C <hive>/repo.git reflog show refs/heads/gitswarm/ws/<id>` recovers
+them for 90 days.
 
 **force-drop**: `drop` on a malformed record (`InvalidState` from `get`)
 does not parse it. It recomputes the branch from the id (refusing if a
@@ -326,8 +354,13 @@ Kinds: `ws.created`, `ws.published`, `ws.dropped`, `ws.expired`, `ws.revoked`
 (force-drop emits `ws.dropped`).
 
 - `gitswarm events tail [--since <oid>]` lists `{kind, id, oid, at, payload}`
-  for commits in `<since>..meta`. `since` must match `^[0-9a-f]{40}$`.
-  `payload` is the record at that commit; `at` is the commit time.
+  for commits in `<since>..meta`. `since` must match `^[0-9a-f]{40}$`; an
+  unknown `since` is `NotFound`. `payload` is the record at that commit; `at`
+  is the commit time.
+- Every commit is validated: `kind` must be one of the five kinds above, the
+  id a ULID, the payload a valid record of at most 64 KiB. A commit that
+  fails (a hand edit, a foreign push) goes to `invalid: [{oid, detail}]` in
+  `events tail` and `stats`; it does not fail the log.
 - Sinks (`[[sink]]` in `config.toml`, `kind = "jsonl" | "webhook"`) fire
   once, after the CAS push succeeded. No retry, no queue. A failing sink
   prints one line to stderr and never raises: the record is already on the
@@ -388,19 +421,23 @@ git does not have.
 | kind | meaning | CLI exit |
 |---|---|---|
 | `Usage` | bad arguments (surface only) | 1 |
-| `NotFound` | id, ref or path missing; invalid id | 2 |
-| `Conflict` | CAS exhausted, branch moved, id collision | 3 |
-| `InvalidState` | disallowed transition, malformed record | 4 |
+| `NotFound` | id, ref or path missing; invalid id; `read` on a tree, `tree` on a blob; unknown `--since` | 2 |
+| `Conflict` | CAS exhausted, branch moved, branch gone from the remote, id collision | 3 |
+| `InvalidState` | disallowed transition, malformed record, malformed `config.toml` | 4 |
 | `Unsupported` | adapter lacks the capability | 5 |
 | `RemoteError` | git failed (non-lease), HTTP failure | 6 |
 
-- CLI prints exactly one JSON line. Success: `{"ok": true, ...}`. Failure:
+- CLI prints exactly one JSON line, including for a malformed `config.toml`
+  or `--base`. Success: `{"ok": true, ...}`. Failure:
   `{"ok": false, "error": {"kind", "detail"}}` plus the exit code above.
+- Details echo at most 120 characters of any remote-sourced value; git
+  stderr in `RemoteError` is capped at 2 KiB.
 - MCP returns the same dicts; failures are payloads, not exceptions.
 - `ws read` returns `content` (UTF-8) or `content_b64` (binary).
 - Ambiguity is an error. No path guesses and continues.
 - The remote is `--remote`, else `GITSWARM_REMOTE`, else found from the
-  cwd; with none, `Usage`. ws commands create the hive when it is missing.
+  cwd, else (commands taking an id) the one hive holding `wt/<id>`; two
+  such hives or none, `Usage`. ws commands create the hive when it is missing.
 - `create` returns the PAT once in `token`; it is not stored in meta (only
   `token_id` is).
 

@@ -107,20 +107,25 @@ publish 가 기록한 원격 tip(40 hex).
 | `ws get <id>` · `ws list [--state]` | meta 조회. list 는 `{workspaces, invalid:[{id, detail}]}` — 깨진 레코드는 건너뛰고 보고한다 | 예 |
 | `ws read <id> <path>` · `ws tree <id> [path]` | 체크아웃 없이 블롭·트리 읽기 | 예 |
 | `ws publish <id>` | 원격 브랜치 tip 을 `published_oid` 로 기록, state=published. worktree 가 있으면 HEAD 를 먼저 push(lease 기준 = §4.1 전용 ref); 없으면 다른 호스트가 push 한 tip 을 기록(브랜치 없으면 NotFound). 두 경로 모두 tip == base 면 InvalidState. 조상 검사는 하지 않는다 — force-push 된 이력도 tip 그대로 기록한다 | 예 |
-| `ws drop <id>` | 원격·로컬 브랜치, worktree 삭제, state=dropped, 토큰 revoke. 회수 실패는 stderr 한 줄 + `token_id` 유지 — 다시 drop 하면 회수 재시도(`ws.revoked`). 망가진 레코드는 id 로 재계산한 브랜치만 지우는 강제 drop | 예 |
+| `ws drop <id>` | 원격·로컬 브랜치, worktree 삭제, state=dropped, 토큰 revoke. 회수 실패는 stderr 한 줄 + `token_id` 유지 — 다시 drop 하면 회수 재시도(`ws.revoked`). 망가진 레코드는 id 로 재계산한 브랜치만 지우는 강제 drop. 이미 dropped 인 레코드도 브랜치·worktree·ref 정리를 되풀이한다(drop 뒤 늦게 push 된 브랜치·다른 호스트의 worktree 회수) | 예 |
 | `ws gc` | `created_at + ttl_s < now` 인 open 을 drop. `{expired, invalid, conflicted}` 반환 — 레코드 하나의 실패는 그 레코드에 격리 | 예 |
 | `doctor` | git ≥ 2.39·홈 쓰기·config·원격 도달(기본 브랜치)·hive·미회수 토큰·ssh 다중화 점검. 검사끼리 독립, 예외 없음. `{ok, checks:[{name, ok, detail}], remote?}` | 예 |
 | `stats` | `{by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens}` | 예 |
 
 - `ttl_s` 기본 상수 `DEFAULT_TTL_S = 7200`. `0` 은 무기한. create 가 `0 ≤ ttl_s ≤ MAX_TTL_S(1년)` 를 검증한다.
 - 원격 meta 에서 읽은 값은 전부 검증하고, 깨진 레코드는 `InvalidState`(get) 또는 `invalid` 보고(list·gc)다 — 절대 traceback 이 아니다.
+  이벤트 커밋도 같다: 제목 `<kind> <ULID>` 의 kind 는 닫힌 다섯 종류, payload 는 유효한 레코드(64 KiB 이하) —
+  아니면 `events tail`·`stats` 가 `invalid: [{oid, detail}]` 로 보고한다. 오류 detail 은 원격 값을 120자까지만,
+  `RemoteError` 의 git stderr 는 2 KiB 까지만 싣는다. `config.toml` 오류도 `InvalidState` 다.
 - 격리 두 방식: 같은 호스트 = worktree 경로, 다른 호스트 = 브랜치 clone. 같은 `id` 로 다룬다.
 - `ws create` 반환: `{id, branch, branch_name, base_oid, path|null, token|null, clone}`.
   `branch_name` = `gitswarm/ws/<id>`(clone·checkout 이 받는 짧은 이름), `clone` = 다른 호스트가
   그대로 실행할 `git clone -b <branch_name> <url>`. 토큰은 어댑터가 TOKEN capability 를 가질
   때만 발급하고, 없으면 `null`(오류 아님). 비밀은 이 반환에 한 번만, meta 엔 `token_id` 만.
 - 원격 결정: `--remote` → `$GITSWARM_REMOTE` → cwd(`<home>/hives/*/wt/<id>` 아래면 그 hive 의
-  `hive.toml`, git 레포 안이면 `origin`) → 없으면 Usage. MCP `remote` 는 선택(서버 cwd 로 같은
+  `hive.toml`, git 레포 안이면 `origin`) → id 를 받는 명령(get·read·tree·publish·drop)이면
+  `hives/*/wt/<id>` 를 가진 hive 하나(둘 이상이면 Usage) → 없으면 Usage. "home 의 hive 가 하나뿐"
+  으로는 고르지 않는다. MCP `remote` 는 선택(서버 cwd 로 같은
   규칙). 성공 결과마다 실제로 쓴 `remote` 를 싣는다.
 - 오류 detail 은 다음 행동이 있으면 한 문장으로 끝에 적는다(예: Conflict 의 `git pull --rebase …`).
 
@@ -149,22 +154,31 @@ raise Conflict
 - 백오프: `CAS_BACKOFF_BASE_S = 0.05`, `CAS_BACKOFF_MAX_S = 2.0`, 지터 ×[0.5, 1.5]. 동시
   작성자 N 이 상한보다 많아도 결정적으로 실패하지 않는다. 8 회·1.0 s 는 작성자 4 에서 3 회 중
   1 회 소진됐다(2026-10-07 실측) — 16 회·2.0 s 는 작성자 8 에서 소진 0 을 시험이 지킨다.
-- `create` 는 브랜치 push 뒤의 어떤 실패(meta `Conflict` 포함)에도 **보상**한다 — 만든 원격
-  브랜치·로컬 ref·토큰을 거두고 원래 예외를 올린다. 레코드 없는 고아 브랜치는 남지 않는다.
+- `create` 는 브랜치 push 뒤의 어떤 실패(meta `Conflict`·`--checkout` 의 worktree 단계 포함)에도
+  **보상**한다 — 만든 원격 브랜치·로컬 ref·worktree·토큰을 거두고 id 를 담은 원래 예외를 올린다.
+  레코드 없는 고아 브랜치도, 브랜치 없는 open 레코드도 남지 않는다.
 - **삭제도 lease 로.** 원격 브랜치 삭제는 마지막으로 본 oid(lease ref, 없으면 tracking)를
   기대값으로 건다(`--force-with-lease=<ref>:<seen> :<ref>`). 거절이면 지금 tip 을 peek 한다 —
   `LeaseMode` 로 갈린다:
-  - `STRICT`(`gc`): 본 적 없는 커밋은 지우지 않는다 → 그 레코드는 `conflicted`.
+  - `STRICT`(`gc`): 지금 tip 이 `base_oid` 면 그것을 기대값으로 지운다(base 너머로 잃을 것이 없다).
+    그 밖의 본 적 없는 커밋은 지우지 않는다 → 그 레코드는 `conflicted`. 로컬 worktree 의 HEAD 가
+    본 tip 보다 앞서 있거나 worktree 가 더러우면 역시 `conflicted` 다(push 안 된 로컬 커밋 보호).
+  - hive 는 reflog 를 남긴다(`core.logAllRefUpdates=true`) — 명시적 drop 이 지운 커밋도 90일 동안
+    `git -C <hive>/repo.git reflog show refs/heads/gitswarm/ws/<id>` 로 되찾는다.
   - `FOLLOW`(명시적 `drop`): "그 workspace 를 버린다"는 의도라 지금 tip 을 기대값으로 한 번 더.
     그 사이 또 옮겨지면 `Conflict`.
   - 두 모드 모두 원격에 브랜치가 이미 없으면 성공이다(자가 치유) — 브랜치를 지운 뒤 meta CAS 가
     진 `drop` 의 레코드(브랜치 없는 open)를 다음 `gc` 가 거둔다.
 - 원격 왕복: 사전검사(ls-remote) 없이 git 의 결과를 해석한다(fetch 의 "couldn't find remote
   ref" = 없음, push 의 "Everything up-to-date" = 기대값이 그 oid 일 때만 성공). 문구 판정이라
-  git 은 `LC_ALL=C` 로 돈다. 명령당 왕복: create·publish·drop 4, read·tree 2, 나머지 1
-  (`tests/test_round_trips.py`, `scripts/bench.py`).
+  git 은 `LC_ALL=C` 로 돈다. 명령당 왕복(실측): create 4(base 를 원격 HEAD 에서 정하면 5),
+  publish 4, drop 4(이 호스트가 본 뒤 브랜치가 움직였으면 7 — 60 s 한도의 `ls-remote` 1회 포함),
+  read·tree 2, gc 1 + 만료 workspace 마다 3, 나머지 1 (`tests/test_round_trips.py`, `scripts/bench.py`).
+- git 호출마다 레포 자리를 정하는 env(`GIT_DIR`·`GIT_WORK_TREE`·`GIT_INDEX_FILE`·
+  `GIT_OBJECT_DIRECTORY`·`GIT_ALTERNATE_OBJECT_DIRECTORIES`·`GIT_COMMON_DIR`·`GIT_NAMESPACE`·
+  `GIT_CEILING_DIRECTORIES`)를 지운다 — 훅·CI 가 내보낸 값이 `-C <hive>` 를 이겨 호출자 레포를 건드린다.
 - 여러 레코드 읽기(list·gc·events·stats)는 `cat-file --batch` 프로세스 하나.
-- SSH 는 hive 별 ControlMaster(`ControlPersist=60`, 소켓 `.ssh-control/mux`, 디렉터리 0700)로
+- SSH 는 hive 별 ControlMaster(`ControlPersist=60`, 소켓 `repo.git/.ssh-control/mux`, 디렉터리 0700)로
   다중화하고 `ServerAliveInterval=15`·`ServerAliveCountMax=4`·`ConnectTimeout=30` 을 건다.
   호출자의 `GIT_SSH_COMMAND`·`GIT_SSH`·`core.sshCommand` 가 있으면 비켜선다. 소켓 경로가 104
   바이트 한도를 넘으면 다중화만 빼고 keepalive 는 건다.
@@ -175,7 +189,7 @@ raise Conflict
   `-` 시작·제어 문자·`x::` transport 거절, http(s) URL 의 userinfo 는 무엇이든 거절(자격뿐이다 —
   credential helper), ssh·scp 꼴의 로그인 이름(`git@`)은 허용 → InvalidState. 오류·로그에 싣는 URL 은
   `redact_url` 로 userinfo 를 `***` 로 가리고 120자로 자른다.
-  driver 는 URL·ref 자리마다 `--` 를 둔다.
+  driver 는 URL 자리와 사용자가 준 ref 자리마다 `--` 를 둔다(계산·검증된 oid·ULID 경로는 아니다).
 - 잠금 파일·데몬 없음. 같은 호스트 형제 프로세스가 로컬 tracking ref 디렉터리를 두고 다투는
   `cannot lock ref` 는 fetch 쪽에서 유한 재시도한다.
 

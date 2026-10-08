@@ -32,11 +32,15 @@ coordinator (has gitswarm)            other host (git only)
    ```
 
    `git clone -b` takes `branch_name` (`gitswarm/ws/<id>`), not `branch`
-   (`refs/heads/gitswarm/ws/<id>`).
+   (`refs/heads/gitswarm/ws/<id>`). The `git push` is mandatory: gitswarm
+   sees only what reached the remote, and `ws get` keeps showing `open`
+   until step 3.
 
 3. Record the result. Any host with gitswarm and push access can do this,
    including the other host itself (inside its clone the remote is found
-   from `origin`).
+   from `origin`). `publish` reads the remote tip: if the push in step 2
+   did not happen, the branch is still at base and you get `InvalidState`
+   "nothing published: branch is still at base" — push first.
 
    ```console
    $ gitswarm ws publish 01M4B3P6V3D549KPH4SC5BTJ74
@@ -61,7 +65,7 @@ coordinator (has gitswarm)            other host (git only)
 With a token adapter ([Forgejo](forgejo-tokens.md), [GitHub](github-app.md))
 `ws create` returns `token`, a credential scoped to that repository. Give
 it to the other host's git through a credential helper or the
-environment, never inside the URL: credentials (userinfo) in http(s)/git
+environment, never inside the URL: credentials (userinfo) in http(s)
 URLs are refused — use a credential helper; ssh login names are fine. A
 URL also ends up in shell history and `.git/config`. The token is shown
 once and revoked on `ws drop` (GitHub tokens instead expire after one
@@ -70,7 +74,10 @@ hour).
 ## Cleanup
 
 The coordinator owns cleanup: `ws drop <id>` when it has what it needs.
-`ws gc` reclaims only open workspaces past `ttl_s` (default 7200 s) whose branch has not
-moved since this host last saw it. It never touches published workspaces,
-and it reports an expired workspace that another host pushed to under
-`conflicted` instead of dropping it. Both need an explicit `ws drop <id>`.
+`ws gc` reclaims open workspaces past `ttl_s` (default 7200 s), from any
+host, when the branch tip is still the base or the last tip this host
+pushed or saw, and the local worktree (if any) has no unpushed or
+uncommitted work. So an expired workspace nobody pushed to is reclaimed
+anywhere; one the other host pushed to but nobody published is reported
+under `conflicted`. It never touches published workspaces. Both need an
+explicit `ws drop <id>`.

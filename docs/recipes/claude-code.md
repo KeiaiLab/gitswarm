@@ -92,7 +92,9 @@ and drops each workspace when it has taken what it needs:
   from `detail` in the worktree and publish again.
 - On `InvalidState` "nothing published", commit first.
 - The lead calls `workspace_drop` for every workspace it is done with.
-  `workspace_gc` reclaims only open workspaces past `ttl_s` whose branch
-  has not moved since this host last saw it; it never touches published
-  workspaces and reports expired ones another host pushed to under
-  `conflicted`. Both need an explicit `workspace_drop`.
+  `workspace_gc` reclaims open workspaces past `ttl_s` whose branch tip is
+  still the base or the last tip this host pushed or saw, and whose
+  worktree holds no unpushed or uncommitted work; it never touches
+  published workspaces and reports the rest under `conflicted`. Both need
+  an explicit `workspace_drop` (the hive's reflog keeps dropped commits for
+  90 days).

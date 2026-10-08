@@ -18,6 +18,11 @@ gitswarm stores its state in a git remote and runs `git` against it.
   - `published_oid`: 40 lowercase hex
   - `created_at` (timezone required) and `ttl_s` (integer, bounded)
   - `--since` oid: 40 lowercase hex
+  - event commits on the meta branch: the subject must be `<kind> <ULID>`
+    with `kind` one of the five event kinds, and the payload must be a valid
+    record; anything else is reported under `invalid: [{oid, detail}]` by
+    `events tail` and `stats` instead of failing them
+  - record size: a record over 64 KiB is `invalid`, not read
   - file paths for `ws read` / `ws tree`: no absolute paths, no `..`
   - remote URLs (`--remote`, `$GITSWARM_REMOTE`, cwd discovery, MCP `remote`,
     `hive.toml`): only `ssh`, `git+ssh`, `https`, `http`, `file` URLs,
@@ -30,9 +35,23 @@ gitswarm stores its state in a git remote and runs `git` against it.
     (`https://user:token@host`, `https://token@host`) — use a credential
     helper; ssh login names (`ssh://git@host`, `git@host:path`) are fine.
     URLs in error messages and logs have their userinfo replaced by `***`. git also gets `--` before every
-    URL and ref.
+    URL and every user-supplied ref.
+- **Remote text is bounded.** Error details echo at most 120 characters of
+  any value read from the remote, and git stderr carried in `RemoteError` is
+  capped at 2 KiB, so one hostile record cannot flood a caller's context.
+- **The caller's repository is not touched.** Repository-locating variables
+  inherited from hooks or CI (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
+  `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
+  `GIT_COMMON_DIR`, `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`) are removed
+  before every git call, so hive commands never land in another repository.
 - **Deletes are leased.** Branch deletion is conditional on the last oid this
-  host saw. `gc` never deletes a commit this host has not seen.
+  host pushed or saw. `gc` deletes a branch only when its tip is that oid or
+  still the base, and never removes a worktree whose HEAD is ahead of that
+  tip or that has uncommitted changes; such workspaces are reported under
+  `conflicted`. An explicit `ws drop` does remove them, but the bare hive
+  keeps reflogs (`core.logAllRefUpdates`), so
+  `git -C <hive>/repo.git reflog show refs/heads/gitswarm/ws/<id>` recovers
+  the commit for 90 days.
 - **Hooks are respected.** A server-side hook decline is a hard error, never
   retried or bypassed.
 
@@ -69,7 +88,7 @@ gitswarm stores its state in a git remote and runs `git` against it.
 - Per-workspace tokens are repository-scoped (`read:repository` or
   `write:repository`), returned once by `ws create`, and revoked on drop.
   Only the token id is stored in meta.
-- SSH multiplexing: the control socket lives in `<hive>/.ssh-control/`
+- SSH multiplexing: the control socket lives in `hives/<id>/repo.git/.ssh-control/`
   (directory mode `700`). It is skipped when you set `GIT_SSH_COMMAND`,
   `GIT_SSH` or `core.sshCommand`.
 - CI: the clone token is removed from `.git/config` before the test suite

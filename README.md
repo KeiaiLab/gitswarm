@@ -55,6 +55,10 @@ $ gitswarm ws publish 01M4B3NX30CF0XQFN7FGKTRSBC
 {"ok": true, "id": "01M4B3NX30CF0XQFN7FGKTRSBC", "oid": "0212f996898c32b842cdc3068580f9ac019391a0", "remote": "file:///tmp/demo/remote.git"}
 ```
 
+`publish` pushes with a lease whose baseline is gitswarm's own last push to
+the branch; a plain `git fetch` does not move it. On `Conflict`, rebase onto
+the remote branch, then publish again ([below](#when-publish-says-conflict)).
+
 Anyone can read it without a checkout:
 
 ```console
@@ -65,7 +69,10 @@ $ gitswarm ws read 01M4B3NX30CF0XQFN7FGKTRSBC src/calc.py
 ```
 
 Drop it when done. This deletes the remote branch, the worktree and any
-token. It is idempotent.
+token. It is idempotent: dropping again repeats the cleanup, so a branch
+pushed after the drop is deleted again. The hive keeps reflogs, so a commit
+lost to a drop stays recoverable for 90 days with
+`git -C <hive>/repo.git reflog show refs/heads/gitswarm/ws/<id>`.
 
 ```console
 $ gitswarm ws drop 01M4B3NX30CF0XQFN7FGKTRSBC
@@ -73,7 +80,9 @@ $ gitswarm ws drop 01M4B3NX30CF0XQFN7FGKTRSBC
 ```
 
 The remote is chosen in this order: `--remote`, `$GITSWARM_REMOTE`, the cwd
-(inside a hive worktree: that hive; inside a git repo: `origin`). The
+(inside a hive worktree: that hive; inside a git repo: `origin`), and for
+commands that take an id (`get`, `read`, `tree`, `publish`, `drop`) the one
+hive holding `wt/<id>` (two such hives: `Usage`, pass `--remote`). The
 `remote` key of every success line is the remote actually used. With none
 of these:
 
@@ -114,10 +123,11 @@ $ gitswarm ws publish 01M4B3PT92MMV3BST3Q0JDNBR6
 ```
 
 Whoever coordinates the run drops the workspace with `ws drop`.
-`ws gc` reclaims only open workspaces past `ttl_s` whose branch has not
-moved since this host last saw it. It never touches published workspaces,
-and it reports an expired workspace that another host pushed to under
-`conflicted` instead of dropping it. Both need an explicit `ws drop <id>`. More: [docs/recipes/other-host.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/other-host.md).
+`ws gc` reclaims open workspaces past `ttl_s`, from any host, when the
+branch tip is still the base or the last tip this host pushed or saw, and
+the local worktree (if any) has no unpushed commits or uncommitted changes.
+Otherwise it reports the id under `conflicted` and leaves it alone. It never
+touches published workspaces. Both need an explicit `ws drop <id>`. More: [docs/recipes/other-host.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/other-host.md).
 
 ## When publish says Conflict
 
@@ -162,14 +172,16 @@ same object. `remote` is optional everywhere; MCP uses the server's cwd.
 | `ws publish <id>` | `workspace_publish` | `ws_id, remote` | `id, oid, remote` |
 | `ws drop <id>` | `workspace_drop` | `ws_id, remote` | the record, `state: dropped` |
 | `ws gc` | `workspace_gc` | `remote` | `expired, invalid, conflicted, remote` |
-| `events tail [--since <oid>]` | `events_tail` | `remote, since` | `events [{kind, id, oid, at, payload}], remote` |
+| `events tail [--since <oid>]` | `events_tail` | `remote, since` | `events [{kind, id, oid, at, payload}], invalid [{oid, detail}], remote` |
 | `doctor` | `doctor` | `remote` | `ok, checks [{name, ok, detail}], remote` |
 | `stats` | `stats` | `remote` | `by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens, remote` |
 | `mcp` | — | — | runs the MCP server on stdio |
 
-- `invalid` lists records that cannot be read; `conflicted` lists expired
-  workspaces whose branch someone pushed after this host last saw it. `gc`
-  skips both; reclaim them with `ws drop <id>`.
+- `invalid` lists records (or, for `events tail` and `stats`, meta commits)
+  that cannot be read; `conflicted` lists expired workspaces whose branch tip
+  is neither the base nor the last tip this host pushed or saw, or whose
+  worktree holds unpushed or uncommitted work. `gc` skips both; reclaim them
+  with `ws drop <id>`.
 - `token` is returned once by `create` and never stored (only `token_id`).
   It is `null` unless a token adapter is configured.
 - Event kinds: `ws.created`, `ws.published`, `ws.dropped`, `ws.expired`,
@@ -201,9 +213,9 @@ with the next step when there is one.
 | kind | meaning | exit |
 |---|---|---|
 | `Usage` | bad arguments or no remote found (surfaces only) | 1 |
-| `NotFound` | id, ref or path missing; malformed id | 2 |
-| `Conflict` | someone else moved the branch or meta; CAS retries exhausted | 3 |
-| `InvalidState` | transition not allowed, malformed record, refused URL | 4 |
+| `NotFound` | id, ref or path missing; malformed id; `read` on a directory, `tree` on a file | 2 |
+| `Conflict` | someone else moved the branch or meta; branch gone from the remote; CAS retries exhausted | 3 |
+| `InvalidState` | transition not allowed, malformed record or `config.toml`, refused URL | 4 |
 | `Unsupported` | the adapter lacks the capability | 5 |
 | `RemoteError` | git or the hosting API failed | 6 |
 
@@ -252,8 +264,9 @@ installation tokens last one hour and cannot be revoked by id; `drop`
 prints their expiry to stderr. Setup: [forgejo-tokens.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/forgejo-tokens.md),
 [github-app.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/github-app.md).
 
-**URLs:** credentials (userinfo) in http(s)/git URLs are refused — use a
-credential helper; ssh login names are fine. `https://user:token@host/…`
+**URLs:** credentials (userinfo) in http(s) URLs are refused — use a
+credential helper; ssh login names are fine. `git://` is refused (no
+authentication, no stall bound). `https://user:token@host/…`
 and `https://token@host/…` fail with `InvalidState` (the error shows
 `https://***@host/…`); `ssh://git@host/…` and `git@host:…` are accepted.
 
@@ -263,8 +276,10 @@ A workspace is not bound to the agent that created it. Anyone who can push
 `refs/heads/gitswarm/*` can publish or drop any workspace and rewrite any
 record; the boundary is the remote's push ACL. Every value read from the
 meta branch is validated and fails closed. `ws drop` deletes unpublished
-commits on that branch, including other people's; `ws gc` never deletes a
-commit this host has not seen. Details: [SECURITY.md](https://github.com/KeiaiLab/gitswarm/blob/stable/SECURITY.md).
+commits on that branch, including other people's (the hive's reflog keeps
+them for 90 days); `ws gc` deletes no commit beyond the base that this host
+has not pushed or seen, and never a worktree with unpushed or uncommitted
+work. Details: [SECURITY.md](https://github.com/KeiaiLab/gitswarm/blob/stable/SECURITY.md).
 
 ## CI
 
@@ -283,7 +298,11 @@ More: [docs/recipes/ci.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs
 
 ## Performance
 
-A command makes 1 to 4 remote round trips. SSH connections are multiplexed
+Remote round trips per command: `create` 4 (5 when the base comes from the
+remote HEAD), `publish` 4, `read` and `tree` 2, `get`, `list` and
+`events tail` 1, `gc` 1 plus 3 per expired workspace, `drop` 4 (7 when the
+branch moved since this host last saw it, including one `ls-remote` with a
+60 s timeout). SSH connections are multiplexed
 per hive, so a command opens no new handshake while the master lives (60 s).
 Measured on 2026-10-07 against Forgejo over SSH (RTT 0.2 s), code at
 commit efcf1da; every budget passed:

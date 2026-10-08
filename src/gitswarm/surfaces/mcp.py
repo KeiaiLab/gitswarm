@@ -136,7 +136,7 @@ def workspace_drop(ws_id: str, remote: str | None = None) -> dict:
 @mcp.tool
 @payload
 def workspace_gc(remote: str | None = None) -> dict:
-    """Drop open workspaces past their ttl. Returns {ok, expired: [ws id, ...], invalid: [{id, detail}, ...], conflicted: [ws id, ...], remote} (invalid = skipped unreadable records; conflicted = skipped because someone pushed after this host last saw the branch; reclaim both with workspace_drop). On failure returns {ok: false, error: {kind, detail}}."""
+    """Drop open workspaces past their ttl. Returns {ok, expired: [ws id, ...], invalid: [{id, detail}, ...], conflicted: [ws id, ...], remote} (invalid = skipped unreadable records; conflicted = skipped because the branch tip is neither the base nor the last tip this host pushed or saw, or the worktree holds unpushed or uncommitted work; reclaim both with workspace_drop). On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
     return with_remote(svc, svc.gc())
 

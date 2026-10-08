@@ -53,6 +53,10 @@ $ gitswarm ws publish 01M4B3NX30CF0XQFN7FGKTRSBC
 {"ok": true, "id": "01M4B3NX30CF0XQFN7FGKTRSBC", "oid": "0212f996898c32b842cdc3068580f9ac019391a0", "remote": "file:///tmp/demo/remote.git"}
 ```
 
+`publish` 는 lease 로 push 하고, 그 기준은 gitswarm 이 그 브랜치에 마지막으로 한 push 다 —
+평범한 `git fetch` 는 기준을 옮기지 않는다. `Conflict` 면 원격 브랜치 위로 rebase 한 뒤 다시
+발행한다([아래](#publish-가-conflict-를-내면)).
+
 누구나 체크아웃 없이 읽는다:
 
 ```console
@@ -62,7 +66,9 @@ $ gitswarm ws read 01M4B3NX30CF0XQFN7FGKTRSBC src/calc.py
 {"ok": true, "path": "src/calc.py", "content": "def add(a, b):\n    return a + b\n", "remote": "file:///tmp/demo/remote.git"}
 ```
 
-끝나면 거둔다. 원격 브랜치·worktree·토큰을 지운다. 멱등이다.
+끝나면 거둔다. 원격 브랜치·worktree·토큰을 지운다. 멱등이다 — 다시 거두면 정리를 되풀이하므로
+거둔 뒤 push 된 브랜치도 다시 지운다. hive 는 reflog 를 남기므로 drop 으로 잃은 커밋은 90일 동안
+`git -C <hive>/repo.git reflog show refs/heads/gitswarm/ws/<id>` 로 되찾는다.
 
 ```console
 $ gitswarm ws drop 01M4B3NX30CF0XQFN7FGKTRSBC
@@ -70,7 +76,9 @@ $ gitswarm ws drop 01M4B3NX30CF0XQFN7FGKTRSBC
 ```
 
 원격은 `--remote` → `$GITSWARM_REMOTE` → cwd(hive worktree 안이면 그 hive, git 레포
-안이면 `origin`) 순으로 정한다. 성공 출력의 `remote` 가 실제로 쓴 원격이다. 셋 다 없으면:
+안이면 `origin`) → id 를 받는 명령(`get`·`read`·`tree`·`publish`·`drop`)이면 `wt/<id>` 를 가진
+hive 하나(둘 이상이면 `Usage` — `--remote` 를 준다) 순으로 정한다. 성공 출력의 `remote` 가
+실제로 쓴 원격이다. 모두 없으면:
 
 ```console
 $ cd /tmp && gitswarm ws list
@@ -108,9 +116,10 @@ $ gitswarm ws publish 01M4B3PT92MMV3BST3Q0JDNBR6
 {"ok": false, "error": {"kind": "InvalidState", "detail": "nothing published: branch is still at base; commit and push to the branch first"}}
 ```
 
-실행을 조율하는 쪽이 `ws drop` 으로 거둔다. `ws gc` 는 `ttl_s` 가 지났고 이 호스트가 마지막으로
-본 뒤 브랜치가 움직이지 않은 open workspace 만 거둔다. published workspace 는 건드리지 않고,
-다른 호스트가 push 한 만료 workspace 는 거두지 않고 `conflicted` 로 보고한다. 둘 다 명시적
+실행을 조율하는 쪽이 `ws drop` 으로 거둔다. `ws gc` 는 `ttl_s` 가 지난 open workspace 를 어느
+호스트에서든 거두되, 브랜치 끝이 아직 base 이거나 이 호스트가 마지막으로 push·본 끝이고 로컬
+worktree(있으면)에 push 안 된 커밋·커밋 안 된 변경이 없을 때만이다. 아니면 거두지 않고 id 를
+`conflicted` 로 보고한다. published workspace 는 건드리지 않는다. 둘 다 명시적
 `ws drop <id>` 가 필요하다.
 자세히: [docs/recipes/other-host.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/other-host.md).
 
@@ -155,13 +164,14 @@ gitswarm 자신의 push 만 옮긴다. rebase 없이 다시 발행하면 같은 
 | `ws publish <id>` | `workspace_publish` | `ws_id, remote` | `id, oid, remote` |
 | `ws drop <id>` | `workspace_drop` | `ws_id, remote` | 레코드, `state: dropped` |
 | `ws gc` | `workspace_gc` | `remote` | `expired, invalid, conflicted, remote` |
-| `events tail [--since <oid>]` | `events_tail` | `remote, since` | `events [{kind, id, oid, at, payload}], remote` |
+| `events tail [--since <oid>]` | `events_tail` | `remote, since` | `events [{kind, id, oid, at, payload}], invalid [{oid, detail}], remote` |
 | `doctor` | `doctor` | `remote` | `ok, checks [{name, ok, detail}], remote` |
 | `stats` | `stats` | `remote` | `by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens, remote` |
 | `mcp` | — | — | stdio MCP 서버 |
 
-- `invalid` 는 읽을 수 없는 레코드, `conflicted` 는 이 호스트가 마지막으로 본 뒤 남이 push 한
-  만료 workspace 다. `gc` 는 둘 다 건너뛴다 — `ws drop <id>` 로 거둔다.
+- `invalid` 는 읽을 수 없는 레코드(`events tail`·`stats` 에서는 meta 커밋), `conflicted` 는
+  브랜치 끝이 base 도 이 호스트가 마지막으로 push·본 끝도 아니거나 worktree 에 push 안 된·커밋
+  안 된 작업이 있는 만료 workspace 다. `gc` 는 둘 다 건너뛴다 — `ws drop <id>` 로 거둔다.
 - `token` 은 `create` 가 한 번만 돌려주고 저장하지 않는다(`token_id` 만 저장). 토큰 어댑터가
   없으면 `null`.
 - 이벤트 종류: `ws.created`, `ws.published`, `ws.dropped`, `ws.expired`, `ws.revoked`.
@@ -191,9 +201,9 @@ $ gitswarm doctor --remote ssh://git@git.keiailab.com/keiailab-oss/gitswarm.git
 | 종류 | 뜻 | 종료코드 |
 |---|---|---|
 | `Usage` | 잘못된 인자, 원격을 못 찾음(표면 전용) | 1 |
-| `NotFound` | id·ref·경로 없음, 잘못된 id | 2 |
-| `Conflict` | 남이 브랜치·meta 를 옮김, CAS 재시도 소진 | 3 |
-| `InvalidState` | 허용되지 않는 전이, 망가진 레코드, 거절된 URL | 4 |
+| `NotFound` | id·ref·경로 없음, 잘못된 id, 디렉터리에 `read`·파일에 `tree` | 2 |
+| `Conflict` | 남이 브랜치·meta 를 옮김, 원격에서 브랜치가 사라짐, CAS 재시도 소진 | 3 |
+| `InvalidState` | 허용되지 않는 전이, 망가진 레코드·`config.toml`, 거절된 URL | 4 |
 | `Unsupported` | 어댑터에 그 기능 없음 | 5 |
 | `RemoteError` | git·호스팅 API 실패 | 6 |
 
@@ -238,8 +248,8 @@ target = "~/.gitswarm/events.jsonl"
 없다 — `drop` 이 만료 시각을 stderr 에 적는다. 준비: [forgejo-tokens.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/forgejo-tokens.md),
 [github-app.md](https://github.com/KeiaiLab/gitswarm/blob/stable/docs/recipes/github-app.md).
 
-**URL:** http(s)/git URL 안의 자격(userinfo)은 거절한다 — credential helper 를 쓴다. ssh 로그인
-이름은 괜찮다. `https://user:token@host/…`·`https://token@host/…` 는 `InvalidState`(오류에는
+**URL:** http(s) URL 안의 자격(userinfo)은 거절한다 — credential helper 를 쓴다. ssh 로그인
+이름은 괜찮다. `git://` 은 거절한다(인증 없음, 멈춤 한도 없음). `https://user:token@host/…`·`https://token@host/…` 는 `InvalidState`(오류에는
 `https://***@host/…` 로 보인다), `ssh://git@host/…`·`git@host:…` 는 받는다.
 
 ## 권한 경계
@@ -247,7 +257,8 @@ target = "~/.gitswarm/events.jsonl"
 workspace 는 만든 에이전트에 묶이지 않는다. `refs/heads/gitswarm/*` 에 push 할 수 있는 누구나
 어떤 workspace 든 발행·폐기하고 어떤 레코드든 고쳐 쓸 수 있다 — 경계는 원격의 push ACL 이다.
 meta 브랜치에서 읽은 값은 전부 검증하고 fail-closed 한다. `ws drop` 은 그 브랜치의 발행 안 된
-커밋(남의 것 포함)까지 지우고, `ws gc` 는 이 호스트가 본 적 없는 커밋을 절대 지우지 않는다.
+커밋(남의 것 포함)까지 지우고(hive 의 reflog 가 90일 남긴다), `ws gc` 는 이 호스트가 push·본 적
+없는 base 너머의 커밋을 지우지 않고 push 안 된·커밋 안 된 작업이 있는 worktree 도 지우지 않는다.
 자세히: [SECURITY.md](https://github.com/KeiaiLab/gitswarm/blob/stable/SECURITY.md).
 
 ## CI
@@ -266,7 +277,9 @@ Forgejo Actions 와 GitHub Actions 가 같은 문법이다. 자세히: [docs/rec
 
 ## 성능
 
-명령 하나는 원격 왕복 1~4회다. SSH 연결은 hive 별로 다중화되어, 마스터가 사는 동안(60 초)
+명령별 원격 왕복: `create` 4(base 를 원격 HEAD 에서 정하면 5), `publish` 4, `read`·`tree` 2,
+`get`·`list`·`events tail` 1, `gc` 1 + 만료 workspace 마다 3, `drop` 4(이 호스트가 마지막으로 본 뒤
+브랜치가 움직였으면 7 — 60 초 한도의 `ls-remote` 1회 포함). SSH 연결은 hive 별로 다중화되어, 마스터가 사는 동안(60 초)
 명령은 새 핸드셰이크를 열지 않는다. 2026-10-07 Forgejo(SSH, RTT 0.2 s) 실측, 코드 efcf1da — 전 예산 통과:
 
 | 명령 | ssh 연결 | 새 핸드셰이크 | 초 | 예산 |
