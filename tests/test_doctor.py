@@ -74,6 +74,7 @@ def test_broken_config_fails(home: Path, text: str):
     (home / "config.toml").write_text(text)
     report = diagnose(None, home)
     assert report["ok"] is False and _check(report, "config")["ok"] is False
+    assert _check(report, "config")["detail"].startswith("InvalidState: ")
 
 
 def test_plain_adapter_needs_no_credential(home: Path):

@@ -523,3 +523,22 @@ def test_inherited_git_dir_does_not_redirect_hive_commands(
     code, out = run("ws", "list", remote=remote_url)
     assert code == 0 and len(out["workspaces"]) == 1, out
     assert config.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "text, cause",
+    [
+        ('[remote."x"]\nadapter = "forgejo"\nbogus = 1\n', "TypeError"),
+        ("[remote]\nadapter = 1\n", "TypeError"),
+        ("not toml ===\n", "TOMLDecodeError"),
+    ],
+    ids=["unknown-key", "wrong-type", "unparsable"],
+)
+def test_bad_config_is_one_json_line(remote_url: str, home: Path, text: str, cause: str):
+    (home / "config.toml").write_text(text)
+    res = runner.invoke(app, ["ws", "list"], env={"GITSWARM_REMOTE": remote_url})
+    lines = res.stdout.strip().splitlines()
+    assert res.exit_code == 4 and len(lines) == 1, res.output
+    err = json.loads(lines[0])["error"]
+    assert err["kind"] == "InvalidState"
+    assert err["detail"].startswith(f"config.toml: {cause}: ")

@@ -6,6 +6,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from gitswarm.errors import InvalidState
+
 CONFIG_FILE = "config.toml"
 
 
@@ -34,7 +36,11 @@ def load_config(home: Path) -> Config:
     if not path.exists():
         return Config()
 
-    raw = tomllib.loads(path.read_text())
-    remotes = {host: RemoteSpec(**spec) for host, spec in raw.get("remote", {}).items()}
-    sinks = [SinkSpec(**s) for s in raw.get("sink", [])]
+    # 손으로 쓰는 파일이다 — 오타·모양 오류는 traceback 이 아니라 JSON 계약 안의 InvalidState
+    try:
+        raw = tomllib.loads(path.read_text())
+        remotes = {host: RemoteSpec(**spec) for host, spec in raw.get("remote", {}).items()}
+        sinks = [SinkSpec(**s) for s in raw.get("sink", [])]
+    except (tomllib.TOMLDecodeError, TypeError, AttributeError, OSError) as e:
+        raise InvalidState(f"{CONFIG_FILE}: {type(e).__name__}: {e}") from None
     return Config(remotes=remotes, sinks=sinks)

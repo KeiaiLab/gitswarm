@@ -14,7 +14,7 @@ from pathlib import Path
 
 from gitswarm.adapters.plain import PlainAdapter
 from gitswarm.adapters.select import FORGEJO, GITHUB
-from gitswarm.config import CONFIG_FILE, Config, load_config
+from gitswarm.config import Config, load_config
 from gitswarm.driver.git import Git
 from gitswarm.errors import GitswarmError, InvalidState, NotFound, RemoteError
 from gitswarm.events import sinks_from_config
@@ -110,11 +110,9 @@ def _home(home: Path) -> Check:
 
 
 def _config(home: Path) -> Check:
-    try:
-        config = load_config(home)
-        sinks_from_config(config)
-    except (ValueError, TypeError, AttributeError, InvalidState) as e:
-        return Check("config", False, f"{CONFIG_FILE}: {type(e).__name__}: {e}")
+    # 잘못된 설정은 InvalidState 다 — _guard 가 그 detail 로 실패를 보고한다
+    config = load_config(home)
+    sinks_from_config(config)
 
     missing = _missing_credentials(config)
     if missing:
