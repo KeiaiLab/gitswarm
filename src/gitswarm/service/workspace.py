@@ -604,7 +604,7 @@ class WorkspaceService:
             self._check_local_work(ws)
 
         # 원격 먼저, lease 로 — 실패하면 로컬도 그대로 둔다
-        if not self._delete_branch(ws.branch, mode):
+        if not self._delete_branch(ws, mode):
             raise Conflict(f"{ws.branch} moved on remote while dropping; not deleting")
 
         self._clear_local(ws.id, ws.branch)
@@ -614,15 +614,17 @@ class WorkspaceService:
             ws.id, kind, lambda cur: _revoked_if(cur.with_state(WsState.DROPPED), revoked)
         )
 
-    def _delete_branch(self, branch: str, mode: LeaseMode) -> bool:
+    def _delete_branch(self, ws: Workspace, mode: LeaseMode) -> bool:
         """원격 브랜치 삭제. 본 oid 로 lease, 거절(또는 본 적 없음)이면 지금 tip 을 본다.
 
         tip 이 없으면 삭제는 끝난 것이다 — STRICT 도 성공이다(meta CAS 가 진 drop 의 자가 치유).
-        tip 이 있으면 STRICT 는 거절, FOLLOW 는 그 tip 으로 한 번 더(lease) — 명시적 drop 은
+        tip 이 base 면 잃을 커밋이 없다 — STRICT 도 그 tip 으로 지운다(남이 만든 workspace 의 회수).
+        그 밖의 tip 이면 STRICT 는 거절, FOLLOW 는 그 tip 으로 한 번 더(lease) — 명시적 drop 은
         "그 workspace 를 버린다"는 의도라 남의 push 도 따라가 지운다.
         lease 는 본 것과 지우는 것 사이(TOCTOU)만 막는다 — 그 사이 또 옮겨지면 False.
         """
         git = self.hive.git
+        branch = ws.branch
         seen = self._seen(branch)
 
         # 본 적 없으면 기준 lease 가 없다 — None 을 넘기면 무조건 삭제가 되므로 넘기지 않는다
@@ -631,7 +633,7 @@ class WorkspaceService:
         current = git.peek(branch)
         if current is None:  # 이미 없다 — 지울 것이 없다
             return True
-        if mode is LeaseMode.STRICT:
+        if mode is LeaseMode.STRICT and current != ws.base_oid:
             return False
         return git.delete_remote(branch, current)
 

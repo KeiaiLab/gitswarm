@@ -488,3 +488,20 @@ def test_drop_keeps_unpushed_commit_in_hive_reflog(svc: WorkspaceService):
     log = git("reflog", "show", "--format=%H %gs", TRASH_REF, cwd=svc.hive.git.repo)
     assert f"{mine} drop {r.id}" in log.splitlines()
     assert git("config", "core.logAllRefUpdates", cwd=svc.hive.git.repo) == "true"
+
+
+def test_gc_on_fresh_host_reclaims_branch_still_at_base(
+    remote_url: str, home: Path, tmp_path: Path
+):
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    hive_a = Hive.init(remote_url, home)
+    svc_a = WorkspaceService(hive_a, MetaStore(hive_a.git), PlainAdapter(), clock=lambda: now)
+    r = svc_a.create("main", {}, 60, None, Checkout.NONE, {})
+
+    # B 는 이 브랜치를 본 적이 없다 — 그래도 tip 이 base 면 잃을 것이 없다
+    hive_b = Hive.init(remote_url, tmp_path / "host-b")
+    later = now + timedelta(seconds=61)
+    svc_b = WorkspaceService(hive_b, MetaStore(hive_b.git), PlainAdapter(), clock=lambda: later)
+    assert svc_b.gc() == {"expired": [r.id], "invalid": [], "conflicted": []}
+    assert svc_b.hive.git.ls_remote(r.branch) is None
+    assert svc_b.get(r.id).state is WsState.DROPPED
