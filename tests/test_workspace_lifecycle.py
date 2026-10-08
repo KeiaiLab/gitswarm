@@ -365,6 +365,52 @@ def test_meta_exhaustion_compensates_branch_and_token(
     assert hive.git.exists(lease_ref(ws_ref(ws_id))) is False
 
 
+def _assert_nothing_left(svc: WorkspaceService) -> None:
+    assert svc.store.list("ws/") == []
+    assert ls_remote_prefix(svc.hive.git.repo, ws_ref("")) == {}
+    assert list((svc.hive.path / "wt").glob("*")) == []
+
+
+def test_worktree_failure_compensates_and_names_id(
+    svc: WorkspaceService, monkeypatch: pytest.MonkeyPatch
+):
+    def worktree_fails(self, path: Path, branch: str) -> None:
+        raise RemoteError("fatal: could not create leading directories")
+
+    monkeypatch.setattr(type(svc.hive.git), "worktree_add", worktree_fails)
+    with pytest.raises(RemoteError, match="leading directories") as e:
+        svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.WORKTREE, labels={})
+    # 오류만 보고도 어느 workspace 였는지 안다: "create <id>: <원래 오류>"
+    word, ws_id, _ = e.value.detail.split(" ", 2)
+    assert word == "create" and ULID_RE.fullmatch(ws_id.removesuffix(":"))
+    _assert_nothing_left(svc)
+
+
+def test_meta_failure_removes_added_worktree(svc: WorkspaceService, monkeypatch):
+    def meta_fails(*a, **k):
+        raise Conflict("meta exhausted")
+
+    monkeypatch.setattr(MetaStore, "apply", meta_fails)
+    with pytest.raises(Conflict, match="meta exhausted"):
+        svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.WORKTREE, labels={})
+    _assert_nothing_left(svc)
+
+
+class TokenCrashAdapter(TokenAdapter):
+    """어댑터의 버그 — GitswarmError 가 아닌 예외도 보상은 하고 그대로 올린다."""
+
+    def issue_token(self, repo: str, ws_id: str, scope: Scope) -> Token:
+        raise RuntimeError("adapter bug")
+
+
+def test_unexpected_error_compensates_and_propagates(remote_url: str, home: Path):
+    hive = Hive.init(remote_url, home)
+    svc = WorkspaceService(hive, MetaStore(hive.git), TokenCrashAdapter())
+    with pytest.raises(RuntimeError, match="adapter bug"):
+        svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
+    _assert_nothing_left(svc)
+
+
 @pytest.mark.parametrize("ttl", [-5, True, "7200", 1.5, 365 * 24 * 3600 + 1])
 def test_create_rejects_bad_ttl(svc: WorkspaceService, ttl):
     with pytest.raises(InvalidState):
