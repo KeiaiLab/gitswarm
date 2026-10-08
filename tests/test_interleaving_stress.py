@@ -118,6 +118,8 @@ def _drop(w: World, host: str) -> str:
     ws_id = w.target()
     before = w.states.get(ws_id)
     svc.drop(ws_id)
+    # 다시 drop 해도 되살아난 브랜치를 지운다
+    w.revived.discard(ws_id)
     if before is not WsState.DROPPED:
         w.dropped_by[ws_id] = svc
     return f"{host}.drop {ws_id}"

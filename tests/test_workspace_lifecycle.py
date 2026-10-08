@@ -84,6 +84,36 @@ def test_drop_twice_is_idempotent(svc: WorkspaceService):
     assert svc.hive.git.exists(tracking_ref(r.branch)) is False
 
 
+def test_redrop_deletes_branch_recreated_by_late_push(svc: WorkspaceService, tmp_path: Path):
+    r = svc.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.NONE, labels={})
+    late = tmp_path / "late"
+    git_cli("clone", "-q", "-b", r.branch_name, svc.url, str(late), cwd=tmp_path)
+    svc.drop(r.id)
+
+    # 다른 호스트의 agent 가 drop 뒤에 push 해 브랜치를 되살렸다
+    git_cli("commit", "-q", "--allow-empty", "-m", "late", cwd=late)
+    git_cli("push", "-q", "origin", "HEAD", cwd=late)
+    assert svc.hive.git.ls_remote(r.branch) is not None
+
+    assert svc.drop(r.id).state is WsState.DROPPED
+    assert svc.hive.git.ls_remote(r.branch) is None
+
+
+def test_redrop_clears_worktree_left_on_creator_host(remote_url: str, tmp_path: Path):
+    hive_a = Hive.init(remote_url, tmp_path / "host-a")
+    hive_b = Hive.init(remote_url, tmp_path / "host-b")
+    svc_a = WorkspaceService(hive_a, MetaStore(hive_a.git), PlainAdapter())
+    svc_b = WorkspaceService(hive_b, MetaStore(hive_b.git), PlainAdapter())
+    r = svc_a.create("main", {}, ttl_s=0, from_ws=None, checkout=Checkout.WORKTREE, labels={})
+    svc_b.drop(r.id)
+
+    # B 가 지운 workspace 의 worktree·로컬 ref 는 A 에 남아 있다 — A 의 drop 이 거둔다
+    assert svc_a.drop(r.id).state is WsState.DROPPED
+    assert not Path(r.path).exists()
+    for ref in (r.branch, lease_ref(r.branch), tracking_ref(r.branch)):
+        assert hive_a.git.exists(ref) is False
+
+
 def test_get_unknown_is_not_found(svc: WorkspaceService):
     with pytest.raises(NotFound):
         svc.get("01J00000000000000000000000")

@@ -555,6 +555,8 @@ class WorkspaceService:
         except InvalidState:
             return self._force_drop(ws_id)
         if ws.state is WsState.DROPPED:
+            # 늦은 push 가 되살린 브랜치·다른 호스트가 지운 뒤 남은 worktree 도 거둔다(둘 다 멱등)
+            self._discard(ws, LeaseMode.FOLLOW)
             return self._retry_revoke(ws)
         return self._drop_as(ws, EV_DROPPED, LeaseMode.FOLLOW)
 
@@ -603,16 +605,18 @@ class WorkspaceService:
         if mode is LeaseMode.STRICT:
             self._check_local_work(ws)
 
-        # 원격 먼저, lease 로 — 실패하면 로컬도 그대로 둔다
-        if not self._delete_branch(ws, mode):
-            raise Conflict(f"{ws.branch} moved on remote while dropping; not deleting")
-
-        self._clear_local(ws.id, ws.branch)
+        self._discard(ws, mode)
         revoked = self._revoke(ws.token_id) if ws.token_id else True
 
         return self._transition(
             ws.id, kind, lambda cur: _revoked_if(cur.with_state(WsState.DROPPED), revoked)
         )
+
+    def _discard(self, ws: Workspace, mode: LeaseMode) -> None:
+        """원격 브랜치를 lease 로 지우고 나서 로컬(worktree·ref)을 지운다. 원격이 지면 로컬도 둔다."""
+        if not self._delete_branch(ws, mode):
+            raise Conflict(f"{ws.branch} moved on remote while dropping; not deleting")
+        self._clear_local(ws.id, ws.branch)
 
     def _delete_branch(self, ws: Workspace, mode: LeaseMode) -> bool:
         """원격 브랜치 삭제. 본 oid 로 lease, 거절(또는 본 적 없음)이면 지금 tip 을 본다.
