@@ -29,7 +29,7 @@ HIVE_ID_LEN = 16
 PROBE_REF = "HEAD"
 TMP_PREFIX = ".tmp-"  # 짓는 중인 hive: <hives>/.tmp-<id>-<무작위>
 LOCK_PREFIX = ".lock-"  # 설치 구간의 hive 별 잠금 파일: <hives>/.lock-<id>
-STALE_TMP_S = 3600  # 이보다 오래된 .tmp-<id>-* 는 죽은 init 의 잔해다
+STALE_TMP_S = 3600  # 이보다 오래된 .tmp-*·.lock-* 는 죽은 init 의 잔해다
 
 
 def resolve_home() -> Path:
@@ -98,7 +98,10 @@ def _build(at: Path, url: str) -> None:
 @contextmanager
 def _locked(path: Path) -> Iterator[None]:
     """path 의 설치 구간을 프로세스·스레드 사이에서 하나씩. open 마다 새 fd 라 같은 pid 끼리도 막힌다."""
-    with open(path.with_name(f"{LOCK_PREFIX}{path.name}"), "a") as f:
+    lock = path.with_name(f"{LOCK_PREFIX}{path.name}")
+    with open(lock, "a") as f:
+        # "a" 로 열면 mtime 이 그대로다 — 쓰는 중인 잠금이 오래된 잔해로 보이지 않게 만진다
+        os.utime(lock)
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
             yield
@@ -106,16 +109,20 @@ def _locked(path: Path) -> Iterator[None]:
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
-def _sweep_stale(path: Path, now: float) -> None:
-    """죽은 init 이 남긴 .tmp-<id>-* 를 치운다. 짓는 중인 것(새것)은 건드리지 않는다."""
-    for d in path.parent.glob(f"{TMP_PREFIX}{path.name}-*"):
+def _sweep_stale(hives: Path, pattern: str, now: float) -> None:
+    """죽은 init 이 남긴 .tmp-* 디렉터리·.lock-* 파일을 치운다. 쓰는 중인 것(새것)은 건드리지 않는다."""
+    for p in hives.glob(pattern):
         # 진 init 은 잠금 밖에서 제 .tmp 를 지운다 — glob 과 stat 사이에 사라질 수 있다
         try:
-            age = now - d.stat().st_mtime
+            age = now - p.stat().st_mtime
         except FileNotFoundError:
             continue
-        if age > STALE_TMP_S:
-            shutil.rmtree(d, ignore_errors=True)
+        if age <= STALE_TMP_S:
+            continue
+        if p.is_dir():
+            shutil.rmtree(p, ignore_errors=True)
+        else:
+            p.unlink(missing_ok=True)
 
 
 def _install(tmp: Path, path: Path) -> None:
@@ -158,7 +165,7 @@ class Hive:
             tmp = Path(tempfile.mkdtemp(prefix=f"{TMP_PREFIX}{path.name}-", dir=path.parent))
             _build(tmp, url)
             with _locked(path):
-                _sweep_stale(path, time.time())
+                _sweep_stale(path.parent, f"{TMP_PREFIX}{path.name}-*", time.time())
                 _install(tmp, path)
         except OSError as e:
             # 권한·디스크 문제 — JSON 계약 안의 오류로(날 traceback 아님)
@@ -174,7 +181,18 @@ class Hive:
         if not (path / HIVE_FILE).exists():
             raise NotFound(f"hive not initialized for {redact_url(url)}; run `gitswarm hive init`")
         stored = _stored_url(path / HIVE_FILE)
-        return cls(path, stored, Git(path / REPO_DIR))
+        hive = cls(path, stored, Git(path / REPO_DIR))
+        hive._tidy(time.time())
+        return hive
+
+    def _tidy(self, now: float) -> None:
+        """명령마다 한 번: 죽은 init 의 잔해(.tmp-*·.lock-*)와 손으로 지운 worktree 의 메타데이터를 걷는다.
+
+        init 안의 청소는 hive 가 생기기 전에만 돈다 — 다 지은 뒤의 잔해는 여기서만 치운다.
+        """
+        for pattern in (f"{TMP_PREFIX}*", f"{LOCK_PREFIX}*"):
+            _sweep_stale(self.path.parent, pattern, now)
+        self.git.worktree_prune()
 
     def worktree_dir(self, ws_id: str) -> Path:
         return self.path / WT_DIR / ws_id

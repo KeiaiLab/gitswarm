@@ -271,3 +271,60 @@ def test_unwritable_home_is_invalid_state(remote_url: str, home: Path, monkeypat
     monkeypatch.setattr(primitive, _deny)
     with pytest.raises(InvalidState, match="cannot write hive home: PermissionError"):
         Hive.init(remote_url, home)
+
+
+# ── hive 위생: 열 때마다 잔해를 치운다 ──────────────────────────
+def _ws_list(remote_url: str) -> None:
+    from typer.testing import CliRunner
+
+    from gitswarm.surfaces.cli import app
+
+    res = CliRunner().invoke(app, ["ws", "list"], env={"GITSWARM_REMOTE": remote_url})
+    assert res.exit_code == 0, res.output
+
+
+def test_open_sweeps_stale_residue_and_keeps_fresh(remote_url: str, home: Path):
+    import time
+
+    from gitswarm.store.hive import STALE_TMP_S
+
+    Hive.init(remote_url, home)
+    hives = home / "hives"
+    stale_tmp = hives / ".tmp-0123456789abcdef-dead"
+    stale_lock = hives / f".lock-{hive_id(remote_url)}"
+    fresh_tmp = hives / ".tmp-0123456789abcdef-busy"
+    stale_tmp.mkdir()
+    fresh_tmp.mkdir()
+    stale_lock.touch()
+    old = time.time() - STALE_TMP_S - 1
+    for p in (stale_tmp, stale_lock):
+        os.utime(p, (old, old))
+
+    _ws_list(remote_url)
+    assert not stale_tmp.exists() and not stale_lock.exists()
+    assert fresh_tmp.exists()
+
+
+def test_open_prunes_a_hand_deleted_worktree_once(remote_url: str, home: Path, monkeypatch):
+    import shutil
+
+    from gitswarm.driver.git import Git
+    from gitswarm.service.workspace import Checkout, open_service
+
+    svc = open_service(remote_url, home)
+    wt = Path(svc.create("main", {}, 0, None, Checkout.WORKTREE, {}).path)
+    meta = svc.hive.git.repo / "worktrees" / wt.name
+    assert meta.is_dir()
+    shutil.rmtree(wt)
+
+    real = Git._run
+    prunes: list[tuple[str, ...]] = []
+
+    def run(self, *args, **kw):
+        if args[:2] == ("worktree", "prune"):
+            prunes.append(args)
+        return real(self, *args, **kw)
+
+    monkeypatch.setattr(Git, "_run", run)
+    Hive.open(remote_url, home)
+    assert len(prunes) == 1 and not meta.exists()

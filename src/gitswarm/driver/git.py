@@ -490,3 +490,6 @@ class Git:
     def worktree_remove(self, path: Path) -> None:
         self._run("worktree", "remove", "--force", str(path))
         self._run("worktree", "prune")
+
+    def worktree_prune(self) -> None:
+        self._run("worktree", "prune")
