@@ -25,6 +25,9 @@ ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 TOKEN_ID_RE = re.compile(r"[0-9]+")  # 원격 PAT id: URL 경로에 들어가므로 숫자만
 # 원격이 정한 값은 크기를 믿지 않는다 — 레코드 하나가 모두의 출력(MCP 문맥)을 채우지 못하게
 MAX_RECORD_BYTES = 64 * 1024
+# 생성 상한은 그보다 작다 — 전이(state·published_oid·token_id)가 레코드를 키워도 읽기 상한 안에 남게
+RECORD_HEADROOM_BYTES = 1024
+CREATE_RECORD_MAX = MAX_RECORD_BYTES - RECORD_HEADROOM_BYTES
 SHOWN_TEXT_MAX = 120  # 오류 문구에 되풀이하는 원격 텍스트의 최대 길이
 
 COMMIT_AUTHOR = "gitswarm"

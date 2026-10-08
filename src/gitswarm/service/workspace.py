@@ -24,6 +24,7 @@ from gitswarm.adapters.remote import Capability, RemoteAdapter, Scope
 from gitswarm.adapters.select import adapter_for, repo_name
 from gitswarm.config import load_config
 from gitswarm.constants import (
+    CREATE_RECORD_MAX,
     HEADS,
     MAX_RECORD_BYTES,
     MAX_TTL_S,
@@ -238,11 +239,7 @@ class Workspace:
         return d
 
     def to_json(self) -> bytes:
-        """기록할 내용. 읽는 쪽이 거절할 크기면 쓰지 않는다(create 는 보상으로 되돌린다)."""
-        data = (json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True) + "\n").encode()
-        if len(data) > MAX_RECORD_BYTES:
-            raise InvalidState(f"record of {len(data)} bytes > {MAX_RECORD_BYTES}")
-        return data
+        return (json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True) + "\n").encode()
 
     @classmethod
     def from_json(cls, data: bytes) -> Workspace:
@@ -398,6 +395,11 @@ def _new_only(prev: bytes | None, ws: Workspace) -> Workspace:
     """생성은 빈 자리에만 쓴다 — 같은 id 가 이미 있으면 ULID 충돌이다."""
     if prev is not None:
         raise Conflict(f"workspace id {ws.id} already recorded")
+
+    # 쓰기 상한은 생성에만 — 전이가 키울 여유를 남겨야 drop·gc 가 기록 뒤에 막히지 않는다
+    size = len(ws.to_json())
+    if size > CREATE_RECORD_MAX:
+        raise InvalidState(f"record of {size} bytes > {CREATE_RECORD_MAX} (create cap)")
     return ws
 
 

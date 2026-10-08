@@ -8,6 +8,7 @@ import pytest
 
 from gitswarm.adapters.plain import PlainAdapter
 from gitswarm.constants import (
+    CREATE_RECORD_MAX,
     MAX_RECORD_BYTES,
     META_REF,
     SHOWN_TEXT_MAX,
@@ -26,6 +27,7 @@ from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
 from gitswarm.surfaces import mcp as mcp_mod
 from gitswarm.surfaces.common import parse_state
+from tests.conftest import git as git_cli
 from tests.conftest import ls_remote_prefix
 from tests.test_workspace_lifecycle import RevokeFailsAdapter, TokenAdapter
 
@@ -102,8 +104,38 @@ def test_oversized_record_is_invalid_not_read(svc: WorkspaceService):
     assert [i["id"] for i in svc.list_report(None)[1]] == [FORGED_ID]
 
 
+def _create_sized(svc: WorkspaceService, size: int, mode: Checkout = Checkout.NONE):
+    """레코드 JSON 이 정확히 size 바이트가 되게 label 을 채워 만든다."""
+    probe = _create(svc)
+    pad = size - len(svc.store.read(meta_path(probe.id)))
+    return svc.create("main", {}, 0, None, mode, {"": "x" * pad})
+
+
+def test_create_refuses_record_near_read_cap(svc: WorkspaceService):
+    # 읽기 상한보다 작아도 전이할 여유(헤드룸)가 없으면 만들지 않는다
+    with pytest.raises(InvalidState, match=f"> {CREATE_RECORD_MAX}"):
+        _create_sized(svc, MAX_RECORD_BYTES - 50)
+    assert len(svc.list(None)) == 1
+
+
+def test_record_at_create_cap_can_still_transition(svc: WorkspaceService):
+    r = _create_sized(svc, CREATE_RECORD_MAX - 10, Checkout.WORKTREE)
+    git_cli("commit", "-q", "--allow-empty", "-m", "w", cwd=Path(r.path))
+    svc.publish(r.id)
+    assert svc.drop(r.id).state is WsState.DROPPED
+    assert len(svc.store.read(meta_path(r.id))) > CREATE_RECORD_MAX
+
+
+def test_transition_writes_past_create_cap(svc: WorkspaceService):
+    # 옛 판이 상한 바로 아래로 만든 레코드도 drop 은 된다 — 쓰기 상한은 생성에만 있다
+    # "open" → "dropped" 은 3 바이트 자란다 — 읽기 상한을 1 바이트 넘는 쓰기
+    pad = MAX_RECORD_BYTES - 2 - len(_with(FORGED_ID, labels={"": ""}))
+    _write(svc, FORGED_ID, _with(FORGED_ID, labels={"": "x" * pad}))
+    assert svc.drop(FORGED_ID).state is WsState.DROPPED
+
+
 def test_create_refuses_record_over_size_limit(svc: WorkspaceService):
-    with pytest.raises(InvalidState, match=f"> {MAX_RECORD_BYTES}"):
+    with pytest.raises(InvalidState, match=f"> {CREATE_RECORD_MAX}"):
         svc.create("main", {}, 0, None, Checkout.NONE, {"k": "x" * MAX_RECORD_BYTES})
     assert svc.store.list("ws/") == []
     assert ls_remote_prefix(svc.hive.git.repo, ws_ref("")) == {}
