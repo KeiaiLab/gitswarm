@@ -113,12 +113,16 @@ TRANSITIONS: dict[WsState, frozenset[WsState]] = {
 }
 
 
-def _shown(value: object) -> str:
-    """오류 문구에 넣을 repr. 원격이 정한 값은 길이를 믿지 않는다 — 앞 SHOWN_TEXT_MAX 자만."""
-    text = repr(value)
+def _cut(text: str) -> str:
+    """원격이 정한 텍스트는 길이를 믿지 않는다 — 앞 SHOWN_TEXT_MAX 자만."""
     if len(text) <= SHOWN_TEXT_MAX:
         return text
     return text[:SHOWN_TEXT_MAX] + TRUNCATED
+
+
+def _shown(value: object) -> str:
+    """오류 문구에 넣을 repr(잘린)."""
+    return _cut(repr(value))
 
 
 def _no_workspace(ws_id: str) -> str:
@@ -480,7 +484,7 @@ class WorkspaceService:
             if RECORD_PATH_RE.fullmatch(path):
                 paths.append(path)
                 continue
-            invalid.append({"id": path, "detail": UNEXPECTED_PATH})
+            invalid.append({"id": _cut(path), "detail": UNEXPECTED_PATH})
 
         blobs = self.store.read_many_at(tip, paths)  # 레코드 수와 무관하게 git 한 번
         for path in paths:
