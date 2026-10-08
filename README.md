@@ -70,9 +70,11 @@ $ gitswarm ws read 01M4B3NX30CF0XQFN7FGKTRSBC src/calc.py
 
 Drop it when done. This deletes the remote branch, the worktree and any
 token. It is idempotent: dropping again repeats the cleanup, so a branch
-pushed after the drop is deleted again. The hive keeps reflogs, so a commit
-lost to a drop stays recoverable for 90 days with
-`git -C <hive>/repo.git reflog show refs/heads/gitswarm/ws/<id>`.
+pushed after the drop is deleted again. Before deleting, drop records the
+local branch tip and worktree HEAD in the reflog of `refs/gitswarm/trash`
+(message `drop <id>`), so a lost commit stays recoverable for 90 days:
+`git -C <hive>/repo.git reflog show refs/gitswarm/trash`, then
+`git -C <hive>/repo.git branch <name> <oid>`.
 
 ```console
 $ gitswarm ws drop 01M4B3NX30CF0XQFN7FGKTRSBC
@@ -177,8 +179,9 @@ same object. `remote` is optional everywhere; MCP uses the server's cwd.
 | `stats` | `stats` | `remote` | `by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens, remote` |
 | `mcp` | — | — | runs the MCP server on stdio |
 
-- `invalid` lists records (or, for `events tail` and `stats`, meta commits)
-  that cannot be read; `conflicted` lists expired workspaces whose branch tip
+- `invalid` lists records that cannot be read (`events tail`: meta commits
+  that cannot be read as events, `[{oid, detail}]`; `stats`: a count of
+  both); `conflicted` lists expired workspaces whose branch tip
   is neither the base nor the last tip this host pushed or saw, or whose
   worktree holds unpushed or uncommitted work. `gc` skips both; reclaim them
   with `ws drop <id>`.

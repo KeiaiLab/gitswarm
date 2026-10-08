@@ -83,15 +83,18 @@ Found by the pre-release review and fixed before tagging:
 
 - `ws gc` removed a worktree holding unpushed commits, and the bare hive
   kept no reflog. gc now reports such a workspace (HEAD ahead of the last
-  seen tip, or dirty) under `conflicted`; `ws drop` still removes it, and
-  `core.logAllRefUpdates` lets
-  `git -C <hive>/repo.git reflog show refs/heads/gitswarm/ws/<id>` recover
-  the commit for 90 days.
+  seen tip, or dirty) under `conflicted`; `ws drop` still removes it but
+  first records the local tips in the reflog of `refs/gitswarm/trash`
+  (`drop <id>`), so `git -C <hive>/repo.git reflog show refs/gitswarm/trash`
+  and `git -C <hive>/repo.git branch <name> <oid>` recover the commit for
+  90 days.
 - An inherited `GIT_DIR` redirected hive commands into the caller's
   repository (and rewrote its `.git/config`).
 - One foreign or corrupt commit on the meta branch made `events tail` and
-  `stats` fail for everyone; they now list it under `invalid: [{oid,
-  detail}]`. Event kinds are checked against the closed set of five.
+  `stats` fail for everyone. `events tail` now lists it under
+  `invalid: [{oid, detail}]` and `stats` counts it in `invalid`. Event kinds
+  are checked against the closed set of five, and payloads are the
+  validated record (unknown keys dropped).
 - Remote text reached callers unbounded (1 MB error details, injected
   event kinds). Details are capped at 120 characters, git stderr at 2 KiB,
   records at 64 KiB.

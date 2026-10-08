@@ -20,8 +20,9 @@ gitswarm stores its state in a git remote and runs `git` against it.
   - `--since` oid: 40 lowercase hex
   - event commits on the meta branch: the subject must be `<kind> <ULID>`
     with `kind` one of the five event kinds, and the payload must be a valid
-    record; anything else is reported under `invalid: [{oid, detail}]` by
-    `events tail` and `stats` instead of failing them
+    record (the payload is that validated record; unknown keys are dropped).
+    Anything else is listed under `invalid: [{oid, detail}]` by
+    `events tail` and counted in `stats`' `invalid` instead of failing them
   - record size: a record over 64 KiB is `invalid`, not read
   - file paths for `ws read` / `ws tree`: no absolute paths, no `..`
   - remote URLs (`--remote`, `$GITSWARM_REMOTE`, cwd discovery, MCP `remote`,
@@ -48,10 +49,11 @@ gitswarm stores its state in a git remote and runs `git` against it.
   host pushed or saw. `gc` deletes a branch only when its tip is that oid or
   still the base, and never removes a worktree whose HEAD is ahead of that
   tip or that has uncommitted changes; such workspaces are reported under
-  `conflicted`. An explicit `ws drop` does remove them, but the bare hive
-  keeps reflogs (`core.logAllRefUpdates`), so
-  `git -C <hive>/repo.git reflog show refs/heads/gitswarm/ws/<id>` recovers
-  the commit for 90 days.
+  `conflicted`. An explicit `ws drop` does remove them, but first records
+  the local tips in the reflog of `refs/gitswarm/trash` (message
+  `drop <id>`): `git -C <hive>/repo.git reflog show refs/gitswarm/trash`,
+  then `git -C <hive>/repo.git branch <name> <oid>`, recovers the commit for
+  90 days.
 - **Hooks are respected.** A server-side hook decline is a hard error, never
   retried or bypassed.
 

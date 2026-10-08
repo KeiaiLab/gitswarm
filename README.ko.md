@@ -67,8 +67,10 @@ $ gitswarm ws read 01M4B3NX30CF0XQFN7FGKTRSBC src/calc.py
 ```
 
 끝나면 거둔다. 원격 브랜치·worktree·토큰을 지운다. 멱등이다 — 다시 거두면 정리를 되풀이하므로
-거둔 뒤 push 된 브랜치도 다시 지운다. hive 는 reflog 를 남기므로 drop 으로 잃은 커밋은 90일 동안
-`git -C <hive>/repo.git reflog show refs/heads/gitswarm/ws/<id>` 로 되찾는다.
+거둔 뒤 push 된 브랜치도 다시 지운다. drop 은 지우기 전에 로컬 브랜치 tip 과 worktree HEAD 를
+`refs/gitswarm/trash` 의 reflog 에 남기므로(메시지 `drop <id>`) 잃은 커밋은 90일 동안 되찾는다:
+`git -C <hive>/repo.git reflog show refs/gitswarm/trash` 로 찾고
+`git -C <hive>/repo.git branch <name> <oid>` 로 살린다.
 
 ```console
 $ gitswarm ws drop 01M4B3NX30CF0XQFN7FGKTRSBC
@@ -169,7 +171,8 @@ gitswarm 자신의 push 만 옮긴다. rebase 없이 다시 발행하면 같은 
 | `stats` | `stats` | `remote` | `by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens, remote` |
 | `mcp` | — | — | stdio MCP 서버 |
 
-- `invalid` 는 읽을 수 없는 레코드(`events tail`·`stats` 에서는 meta 커밋), `conflicted` 는
+- `invalid` 는 읽을 수 없는 레코드(`events tail` 은 이벤트로 못 읽는 meta 커밋 `[{oid, detail}]`,
+  `stats` 는 둘을 합한 수), `conflicted` 는
   브랜치 끝이 base 도 이 호스트가 마지막으로 push·본 끝도 아니거나 worktree 에 push 안 된·커밋
   안 된 작업이 있는 만료 workspace 다. `gc` 는 둘 다 건너뛴다 — `ws drop <id>` 로 거둔다.
 - `token` 은 `create` 가 한 번만 돌려주고 저장하지 않는다(`token_id` 만 저장). 토큰 어댑터가

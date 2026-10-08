@@ -115,7 +115,8 @@ publish 가 기록한 원격 tip(40 hex).
 - `ttl_s` 기본 상수 `DEFAULT_TTL_S = 7200`. `0` 은 무기한. create 가 `0 ≤ ttl_s ≤ MAX_TTL_S(1년)` 를 검증한다.
 - 원격 meta 에서 읽은 값은 전부 검증하고, 깨진 레코드는 `InvalidState`(get) 또는 `invalid` 보고(list·gc)다 — 절대 traceback 이 아니다.
   이벤트 커밋도 같다: 제목 `<kind> <ULID>` 의 kind 는 닫힌 다섯 종류, payload 는 유효한 레코드(64 KiB 이하) —
-  아니면 `events tail`·`stats` 가 `invalid: [{oid, detail}]` 로 보고한다. 오류 detail 은 원격 값을 120자까지만,
+  아니면 `events tail` 이 `invalid: [{oid, detail}]` 로 보고하고 `stats` 는 `invalid` 수에 센다.
+  payload 는 검증한 레코드다(모르는 키는 버린다). 오류 detail 은 원격 값을 120자까지만,
   `RemoteError` 의 git stderr 는 2 KiB 까지만 싣는다. `config.toml` 오류도 `InvalidState` 다.
 - 격리 두 방식: 같은 호스트 = worktree 경로, 다른 호스트 = 브랜치 clone. 같은 `id` 로 다룬다.
 - `ws create` 반환: `{id, branch, branch_name, base_oid, path|null, token|null, clone}`.
@@ -163,8 +164,10 @@ raise Conflict
   - `STRICT`(`gc`): 지금 tip 이 `base_oid` 면 그것을 기대값으로 지운다(base 너머로 잃을 것이 없다).
     그 밖의 본 적 없는 커밋은 지우지 않는다 → 그 레코드는 `conflicted`. 로컬 worktree 의 HEAD 가
     본 tip 보다 앞서 있거나 worktree 가 더러우면 역시 `conflicted` 다(push 안 된 로컬 커밋 보호).
-  - hive 는 reflog 를 남긴다(`core.logAllRefUpdates=true`) — 명시적 drop 이 지운 커밋도 90일 동안
-    `git -C <hive>/repo.git reflog show refs/heads/gitswarm/ws/<id>` 로 되찾는다.
+  - drop 은 지우기 전에 로컬 브랜치 tip·worktree HEAD 를 `refs/gitswarm/trash` 의 reflog 에 남긴다
+    (메시지 `drop <id>`, `core.logAllRefUpdates=true` — ref 를 지우면 그 ref 의 reflog 도 사라지므로 따로 둔다).
+    90일 동안 `git -C <hive>/repo.git reflog show refs/gitswarm/trash` 로 찾고
+    `git -C <hive>/repo.git branch <name> <oid>` 로 되찾는다.
   - `FOLLOW`(명시적 `drop`): "그 workspace 를 버린다"는 의도라 지금 tip 을 기대값으로 한 번 더.
     그 사이 또 옮겨지면 `Conflict`.
   - 두 모드 모두 원격에 브랜치가 이미 없으면 성공이다(자가 치유) — 브랜치를 지운 뒤 meta CAS 가

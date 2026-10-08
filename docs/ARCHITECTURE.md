@@ -80,6 +80,7 @@ Local hive (one per remote, `GITSWARM_HOME` or `~/.gitswarm`):
   `hives/.lock-*` files older than `STALE_TMP_S` (3600 s; a lock in use is
   touched, so it never looks stale) and runs `git worktree prune` once, so a
   worktree deleted by hand loses its `repo.git/worktrees/<id>` entry.
+  `doctor` opens the hive too, so it also runs this cleanup.
 
 ## 4. The workspace record
 
@@ -125,9 +126,9 @@ record is therefore untrusted input. `Workspace.from_json` fails closed with
   without timezone
 
 `get` raises on a bad record. `list` and `gc` skip it and report it under
-`invalid: [{id, detail}]`, and `events tail` and `stats` do the same for a
-bad meta commit (`invalid: [{oid, detail}]`), so one bad record does not
-stop everyone. A bad
+`invalid: [{id, detail}]`; `events tail` skips a bad meta commit and lists
+it under `invalid: [{oid, detail}]`, and `stats` counts both in `invalid`,
+so one bad record does not stop everyone. A bad
 record is removed with `ws drop <id>` (force-drop, section 6).
 
 ## 5. The meta CAS
@@ -336,10 +337,13 @@ Rule: gc never deletes a commit beyond the base that this host has not
 pushed or seen, and never removes a worktree with unpushed or uncommitted
 work. It therefore reclaims, from any host, an expired workspace nobody
 pushed to. Both skipped classes are removed by an explicit `ws drop <id>`.
-That drop does remove unpushed worktree commits, but the bare hive keeps
-reflogs (`core.logAllRefUpdates`):
-`git -C <hive>/repo.git reflog show refs/heads/gitswarm/ws/<id>` recovers
-them for 90 days.
+That drop does remove unpushed worktree commits, but `_clear_local` first
+records the local branch tip and worktree `HEAD` in the reflog of
+`refs/gitswarm/trash` (`TRASH_REF`, message `drop <id>`; the hive sets
+`core.logAllRefUpdates`). A ref's own reflog dies with the ref, hence the
+separate ref. Recover with
+`git -C <hive>/repo.git reflog show refs/gitswarm/trash`, then
+`git -C <hive>/repo.git branch <name> <oid>`, for 90 days.
 
 **force-drop**: `drop` on a malformed record (`InvalidState` from `get`)
 does not parse it. It recomputes the branch from the id (refusing if a
@@ -355,12 +359,13 @@ Kinds: `ws.created`, `ws.published`, `ws.dropped`, `ws.expired`, `ws.revoked`
 
 - `gitswarm events tail [--since <oid>]` lists `{kind, id, oid, at, payload}`
   for commits in `<since>..meta`. `since` must match `^[0-9a-f]{40}$`; an
-  unknown `since` is `NotFound`. `payload` is the record at that commit; `at`
-  is the commit time.
+  unknown `since` is `NotFound`. `payload` is the validated record at that
+  commit (unknown keys dropped); `at` is the commit time.
 - Every commit is validated: `kind` must be one of the five kinds above, the
   id a ULID, the payload a valid record of at most 64 KiB. A commit that
   fails (a hand edit, a foreign push) goes to `invalid: [{oid, detail}]` in
-  `events tail` and `stats`; it does not fail the log.
+  `events tail` and is counted in `stats`' `invalid`; it does not fail the
+  log.
 - Sinks (`[[sink]]` in `config.toml`, `kind = "jsonl" | "webhook"`) fire
   once, after the CAS push succeeded. No retry, no queue. A failing sink
   prints one line to stderr and never raises: the record is already on the
