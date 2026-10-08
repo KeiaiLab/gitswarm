@@ -83,6 +83,7 @@ MASTER_TEMP_SUFFIX = 17  # ssh 는 마스터 소켓을 "<path>.<16자>" 로 만�
 # cat-file --batch 의 찾은 객체 헤더: "<oid> <type> <size>". 못 찾으면 "<rev> missing" 따위.
 BATCH_HEADER_RE = re.compile(rb"([0-9a-f]{40,64}) ([a-z]+) ([0-9]+)")
 BLOB = "blob"
+TREE = "tree"
 
 BLOB_MODE = "100644"
 TREE_MODE = "040000"
@@ -359,6 +360,13 @@ class Git:
 
     def exists(self, rev: str) -> bool:
         return self._run("cat-file", "-e", rev, ok_rc=(0, 1, 128)).returncode == 0
+
+    def object_type(self, rev: str) -> str | None:
+        """rev 가 가리키는 객체의 종류(blob·tree·commit·tag). 없으면 None."""
+        p = self._run("cat-file", "-t", rev, ok_rc=(0, RC_FATAL))
+        if p.returncode != 0:
+            return None
+        return p.stdout.decode().strip()
 
     def hash_object(self, data: bytes) -> str:
         return self._out("hash-object", "-w", "--stdin", data=data)

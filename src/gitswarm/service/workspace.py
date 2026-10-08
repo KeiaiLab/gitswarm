@@ -40,7 +40,7 @@ from gitswarm.constants import (
     ws_branch,
     ws_ref,
 )
-from gitswarm.driver.git import Git, LogEntry
+from gitswarm.driver.git import BLOB, TREE, Git, LogEntry
 from gitswarm.errors import (
     TRUNCATED,
     Conflict,
@@ -603,20 +603,25 @@ class WorkspaceService:
             raise NotFound(f"invalid path: {_shown(path)}")
         return path
 
+    def _object_at(self, ws_id: str, rev: str, path: str, kind: str) -> str:
+        """rev 가 kind 종류의 객체여야 한다. 없거나 종류가 다르면 NotFound(git 실패가 아니다)."""
+        found = self.hive.git.object_type(rev)
+        if found is None:
+            raise NotFound(f"{path} not in {ws_id}")
+        if found != kind:
+            raise NotFound(f"{path} is a {found}, not a {kind}")
+        return rev
+
     def read(self, ws_id: str, path: str) -> bytes:
         ws = self.get(ws_id)
         rev = f"{self._published_rev(ws)}:{self._safe_path(path)}"
-        if not self.hive.git.exists(rev):
-            raise NotFound(f"{path} not in {ws_id}")
-        return self.hive.git.cat_file(rev)
+        return self.hive.git.cat_file(self._object_at(ws_id, rev, path, BLOB))
 
     def tree(self, ws_id: str, path: str = "") -> list[dict]:
         ws = self.get(ws_id)
         rev = self._published_rev(ws)
         if path:
-            rev = f"{rev}:{self._safe_path(path)}"
-            if not self.hive.git.exists(rev):
-                raise NotFound(f"{path} not in {ws_id}")
+            rev = self._object_at(ws_id, f"{rev}:{self._safe_path(path)}", path, TREE)
         return [{"name": e.name, "kind": e.kind, "oid": e.oid} for e in self.hive.git.ls_tree(rev)]
 
     # ── 폐기 ──────────────────────────────────────────────────

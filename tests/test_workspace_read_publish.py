@@ -505,3 +505,18 @@ def test_gc_on_fresh_host_reclaims_branch_still_at_base(
     assert svc_b.gc() == {"expired": [r.id], "invalid": [], "conflicted": []}
     assert svc_b.hive.git.ls_remote(r.branch) is None
     assert svc_b.get(r.id).state is WsState.DROPPED
+
+
+def test_read_of_directory_and_tree_of_file_are_not_found(svc: WorkspaceService):
+    r = svc.create("main", {}, 0, None, Checkout.WORKTREE, {})
+    (Path(r.path) / "src").mkdir()
+    _commit_file(Path(r.path), "src/a.py", "a\n")
+    svc.publish(r.id)
+
+    # 종류가 틀린 경로는 git 실패(RemoteError, 재시도 대상)가 아니라 없는 것이다
+    with pytest.raises(NotFound, match="src is a tree"):
+        svc.read(r.id, "src")
+    with pytest.raises(NotFound, match=r"src/a\.py is a blob"):
+        svc.tree(r.id, "src/a.py")
+    assert svc.read(r.id, "src/a.py") == b"a\n"
+    assert [e["name"] for e in svc.tree(r.id, "src")] == ["a.py"]
