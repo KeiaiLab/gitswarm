@@ -45,6 +45,18 @@ UP_TO_DATE_MARKER = "Everything up-to-date"
 # ls-remote --symref 의 HEAD 줄: "ref: refs/heads/main\tHEAD"
 SYMREF_PREFIX = f"ref: {HEADS}"
 REMOTE_HEAD = "HEAD"
+# 레포 자리를 정하는 변수 — 훅·CI 가 내보낸 값이 `-C <hive>` 를 이기고 호출자 레포를 건드린다.
+# 지운다(GIT_SSH*·GIT_CONFIG_*·GIT_TERMINAL_PROMPT 따위 호출자 설정은 둔다).
+REPO_LOCATING_ENVS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES",
+)
 
 
 def is_lease_rejection(stderr: str) -> bool:
@@ -119,8 +131,9 @@ class Git:
         data: bytes | None = None,
         ok_rc: tuple[int, ...] = (0,),
     ) -> subprocess.CompletedProcess:
+        inherited = {k: v for k, v in os.environ.items() if k not in REPO_LOCATING_ENVS}
         env = {
-            **os.environ,
+            **inherited,
             "GIT_AUTHOR_NAME": COMMIT_AUTHOR,
             "GIT_AUTHOR_EMAIL": COMMIT_EMAIL,
             "GIT_COMMITTER_NAME": COMMIT_AUTHOR,

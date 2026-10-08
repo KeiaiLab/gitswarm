@@ -506,3 +506,20 @@ def test_refused_url_is_redacted_on_stdout(monkeypatch, capsys):
 def test_refused_url_is_redacted_in_doctor(monkeypatch, capsys):
     code, stdout = main_cli(monkeypatch, capsys, "doctor", "--remote", "https://bot:s3cret@host/r")
     assert code != 0 and "s3cret" not in stdout and "***@host/r" in stdout
+
+
+def test_inherited_git_dir_does_not_redirect_hive_commands(
+    remote_url: str, home: Path, tmp_path: Path, monkeypatch
+):
+    # 훅·CI 가 내보낸 GIT_DIR 이 hive 명령을 호출자 레포로 돌리면 안 된다
+    other = tmp_path / "other"
+    git("init", "-q", str(other), cwd=tmp_path)
+    config = other / ".git" / "config"
+    before = config.read_bytes()
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+
+    code, out = run("ws", "create", "--base", "main", "--checkout", remote=remote_url)
+    assert code == 0 and out["ok"] is True, out
+    code, out = run("ws", "list", remote=remote_url)
+    assert code == 0 and len(out["workspaces"]) == 1, out
+    assert config.read_bytes() == before
