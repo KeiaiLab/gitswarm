@@ -520,3 +520,12 @@ def test_read_of_directory_and_tree_of_file_are_not_found(svc: WorkspaceService)
         svc.tree(r.id, "src/a.py")
     assert svc.read(r.id, "src/a.py") == b"a\n"
     assert [e["name"] for e in svc.tree(r.id, "src")] == ["a.py"]
+
+
+def test_publish_after_branch_vanished_says_gone(svc: WorkspaceService):
+    r = svc.create("main", {}, 0, None, Checkout.WORKTREE, {})
+    _commit_file(Path(r.path), "mine.txt", "y\n")
+    # 다른 호스트의 drop 이 그 사이 브랜치를 지웠다 — rebase 안내는 틀린 길이다
+    git("push", "-q", svc.url, f":{r.branch}", cwd=Path(r.path))
+    with pytest.raises(Conflict, match=r"is gone from the remote \(dropped\?\)"):
+        svc.publish(r.id)

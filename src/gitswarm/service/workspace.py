@@ -800,12 +800,16 @@ class WorkspaceService:
 
     def _push_leased(self, head: str, branch: str) -> bool:
         """HEAD 를 lease push. 거절이어도 HEAD 가 원격 tip 을 이미 품었으면(pull --rebase 뒤)
-        그 tip 을 lease 로 한 번 더 — 남의 커밋을 잃지 않음이 조상 관계로 증명된다."""
+        그 tip 을 lease 로 한 번 더 — 남의 커밋을 잃지 않음이 조상 관계로 증명된다.
+        원격에 브랜치가 없으면 Conflict(gone)."""
         git = self.hive.git
         if git.push(head, branch, expected=self._seen(branch)):
             return True
         remote = git.peek(branch)
-        if remote is None or not git.is_ancestor(remote, head):
+        # 브랜치가 없으면 rebase 할 것도 없다 — 누군가 drop 했다
+        if remote is None:
+            raise Conflict(f"{branch} is gone from the remote (dropped?)")
+        if not git.is_ancestor(remote, head):
             return False
         return git.push(head, branch, expected=remote)
 
