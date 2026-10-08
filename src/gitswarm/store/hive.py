@@ -119,10 +119,39 @@ def _sweep_stale(hives: Path, pattern: str, now: float) -> None:
             continue
         if age <= STALE_TMP_S:
             continue
+        # 다른 명령의 청소가 먼저 지웠을 수 있다 — 없으면 이미 끝난 것이다
         if p.is_dir():
             shutil.rmtree(p, ignore_errors=True)
-        else:
-            p.unlink(missing_ok=True)
+            continue
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _residue_owner(name: str) -> str:
+    """잔해 이름의 hive id. ".tmp-<id>-<무작위>" · ".lock-<id>" → <id>."""
+    if name.startswith(TMP_PREFIX):
+        return name[len(TMP_PREFIX) :].split("-", 1)[0]
+    return name[len(LOCK_PREFIX) :]
+
+
+def _sweep_if_idle(path: Path, now: float) -> None:
+    """path 의 init 잠금을 기다리지 않고 잡았을 때만 그 잔해를 치운다.
+
+    잡혀 있으면 그 hive 의 init 이 도는 중이다 — 오래돼 보여도 건드리지 않고 넘어간다.
+    """
+    lock = path.with_name(f"{LOCK_PREFIX}{path.name}")
+    with open(lock, "a") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        try:
+            _sweep_stale(path.parent, f"{TMP_PREFIX}{path.name}-*", now)
+            _sweep_stale(path.parent, lock.name, now)
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def _install(tmp: Path, path: Path) -> None:
@@ -189,9 +218,16 @@ class Hive:
         """명령마다 한 번: 죽은 init 의 잔해(.tmp-*·.lock-*)와 손으로 지운 worktree 의 메타데이터를 걷는다.
 
         init 안의 청소는 hive 가 생기기 전에만 돈다 — 다 지은 뒤의 잔해는 여기서만 치운다.
+        hive 별로 그 init 잠금을 잡은 동안만 치운다 — 도는 init 의 .tmp 는 오래돼 보여도 둔다.
         """
-        for pattern in (f"{TMP_PREFIX}*", f"{LOCK_PREFIX}*"):
-            _sweep_stale(self.path.parent, pattern, now)
+        hives = self.path.parent
+        owners = {
+            _residue_owner(p.name)
+            for pattern in (f"{TMP_PREFIX}*", f"{LOCK_PREFIX}*")
+            for p in hives.glob(pattern)
+        }
+        for owner in sorted(owners):
+            _sweep_if_idle(hives / owner, now)
         self.git.worktree_prune()
 
     def worktree_dir(self, ws_id: str) -> Path:

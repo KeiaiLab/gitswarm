@@ -344,3 +344,51 @@ def test_lock_in_use_is_touched_so_the_sweep_keeps_it(tmp_path: Path):
 
     with _locked(target):
         assert time.time() - lock.stat().st_mtime < STALE_TMP_S
+
+
+def _stale(p: Path) -> None:
+    import time
+
+    from gitswarm.store.hive import STALE_TMP_S
+
+    old = time.time() - STALE_TMP_S - 1
+    os.utime(p, (old, old))
+
+
+def test_sweep_tolerates_a_file_removed_concurrently(remote_url: str, home: Path, monkeypatch):
+    # 다른 명령의 청소가 먼저 지웠다 — 목록과 unlink 사이에 사라져도 오류가 아니다
+    Hive.init(remote_url, home)
+    lock = home / "hives" / ".lock-0123456789abcdef"
+    lock.touch()
+    _stale(lock)
+    real = Path.unlink
+    raised: list[Path] = []
+
+    def unlink(self, *a, **kw):
+        if self == lock and not raised:
+            raised.append(self)
+            raise FileNotFoundError(self)
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    assert Hive.open(remote_url, home).url == remote_url
+    assert raised == [lock]
+
+
+def test_sweep_skips_a_hive_whose_init_lock_is_held(remote_url: str, home: Path):
+    import fcntl
+
+    # 잠금이 잡혀 있으면 그 hive 의 init 이 도는 중이다 — 오래된 .tmp 라도 건드리지 않는다
+    Hive.init(remote_url, home)
+    hives = home / "hives"
+    tmp = hives / ".tmp-0123456789abcdef-busy"
+    tmp.mkdir()
+    _stale(tmp)
+    with open(hives / ".lock-0123456789abcdef", "a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        Hive.open(remote_url, home)
+        assert tmp.exists()
+        fcntl.flock(held, fcntl.LOCK_UN)
+
+    Hive.open(remote_url, home)
+    assert not tmp.exists()

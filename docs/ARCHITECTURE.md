@@ -77,8 +77,10 @@ Local hive (one per remote, `GITSWARM_HOME` or `~/.gitswarm`):
 - `lease/*` and `peek/*` mirror the full ref name under their prefix
   (`LEASE`, `PEEK`).
 - `Hive.open`, which every command passes, sweeps `hives/.tmp-*` dirs and
-  `hives/.lock-*` files older than `STALE_TMP_S` (3600 s; a lock in use is
-  touched, so it never looks stale) and runs `git worktree prune` once, so a
+  `hives/.lock-*` files older than `STALE_TMP_S` (3600 s), per hive and only
+  while holding that hive's init lock (taken non-blocking; held means an init
+  is running, so that hive is skipped; residue already gone counts as
+  swept), and runs `git worktree prune` once, so a
   worktree deleted by hand loses its `repo.git/worktrees/<id>` entry.
   `doctor` opens the hive too, so it also runs this cleanup.
 
