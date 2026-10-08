@@ -328,3 +328,19 @@ def test_open_prunes_a_hand_deleted_worktree_once(remote_url: str, home: Path, m
     monkeypatch.setattr(Git, "_run", run)
     Hive.open(remote_url, home)
     assert len(prunes) == 1 and not meta.exists()
+
+
+def test_lock_in_use_is_touched_so_the_sweep_keeps_it(tmp_path: Path):
+    import time
+
+    from gitswarm.store.hive import STALE_TMP_S, _locked
+
+    # "a" 로 열면 mtime 이 그대로다 — 쓰는 중인 잠금이 오래된 잔해로 보여 지워지면 안 된다
+    target = tmp_path / "hiveid"
+    lock = tmp_path / ".lock-hiveid"
+    lock.touch()
+    old = time.time() - STALE_TMP_S - 1
+    os.utime(lock, (old, old))
+
+    with _locked(target):
+        assert time.time() - lock.stat().st_mtime < STALE_TMP_S
