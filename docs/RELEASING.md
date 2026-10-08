@@ -9,7 +9,21 @@ Version lives in one place: `[project].version` in `pyproject.toml`.
 3. Land via the usual path (`land-direct`). CI runs the gate, including
    the sdist/wheel content checks.
 
-## 2. Tag
+## 2. Smoke the landed sha against a real remote
+
+Run the lifecycle once on the landed `stable` sha before tagging. The
+unit suite uses `file://` remotes; this is the only step that exercises
+SSH, the server's hooks and CI on a real forge.
+
+```sh
+git switch --detach origin/stable
+GITSWARM_HOME=$(mktemp -d) uv run --with-editable . scripts/smoke.py <ssh-url> stable
+```
+
+Expected: `created … / publish <oid> / events … / drop dropped / OK`.
+A failure here stops the release; fix on `stable` first.
+
+## 3. Tag
 
 Tag the landed `stable` sha, not a local commit.
 
@@ -21,7 +35,7 @@ git push origin vX.Y.Z
 
 The push hook guards branch refspecs only; tag pushes pass.
 
-## 3. Build
+## 4. Build
 
 ```sh
 git switch --detach vX.Y.Z
@@ -31,7 +45,7 @@ rm -rf dist && uv build
 Produces `dist/gitswarm-X.Y.Z-py3-none-any.whl` and
 `dist/gitswarm-X.Y.Z.tar.gz`.
 
-## 4. Forgejo release
+## 5. Forgejo release
 
 Body = the `## X.Y.Z` section of `CHANGELOG.md`. Token: maintainer PAT
 (`~/.config/keiailab/forgejo-admin.token`), never committed.
@@ -51,7 +65,19 @@ for f in dist/*.whl dist/*.tar.gz; do
 done
 ```
 
-## 5. PyPI
+If the asset upload answers `500 {"message":"Create: permission denied"}`,
+the forge's attachment storage is not writable; the release body still
+publishes. Attach the files to the GitHub release instead and record the
+forge issue — do not retry blindly.
+
+## 5b. GitHub release (mirror)
+
+```sh
+gh workflow run mirror.yml        # pull mirror: stable + tags
+gh release create vX.Y.Z --title vX.Y.Z --notes-file <body> --verify-tag dist/*.whl dist/*.tar.gz
+```
+
+## 6. PyPI
 
 The upload token comes from the maintainer at publish time. Never store
 it in the repo or shell history files.
