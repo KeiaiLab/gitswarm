@@ -9,7 +9,6 @@ GOOD = [
     "SSH://git@host:2222/org/repo",
     "https://host/org/repo.git",
     "http://host/org/repo",
-    "git://host/org/repo",
     "file:///srv/r.git",
     "git@host:org/repo.git",
     "host:repo",
@@ -33,6 +32,7 @@ BAD = [
     "fd::17",
     "ssh-helper::x",
     "ftp://host/r",
+    "git://host/org/repo",  # 멈춤 한도를 걸 수 없고 인증도 없다
     "foo://host/r",
     "file:///r\n.git",
     "/r\x00.git",

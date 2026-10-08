@@ -20,11 +20,13 @@ gitswarm stores its state in a git remote and runs `git` against it.
   - `--since` oid: 40 lowercase hex
   - file paths for `ws read` / `ws tree`: no absolute paths, no `..`
   - remote URLs (`--remote`, `$GITSWARM_REMOTE`, cwd discovery, MCP `remote`,
-    `hive.toml`): only `ssh`, `git+ssh`, `https`, `http`, `git`, `file` URLs,
+    `hive.toml`): only `ssh`, `git+ssh`, `https`, `http`, `file` URLs,
     scp-style `[user@]host:path` or absolute paths; user `[A-Za-z0-9._~+-]`,
     host `[A-Za-z0-9._-]` or a bracketed IPv6 literal (neither may start with
     `-`), digits-only port, no `%`; no leading `-`, control characters or
-    `x::` transports. Credentials (userinfo) in http(s)/git URLs are refused
+    `x::` transports. `git://` is refused: it carries no authentication and
+    gives gitswarm no place to bound a stalled transfer. Credentials
+    (userinfo) in http(s) URLs are refused
     (`https://user:token@host`, `https://token@host`) — use a credential
     helper; ssh login names (`ssh://git@host`, `git@host:path`) are fine.
     URLs in error messages and logs have their userinfo replaced by `***`. git also gets `--` before every

@@ -171,8 +171,8 @@ raise Conflict
 - 멈춤 한도: 벽시계 한도(60 s)는 짧은 조회 `ls-remote` 에만. 전송(fetch·push)은 진행 없음만
   끊는다 — http `lowSpeedLimit=1000 B/s`·`lowSpeedTime=60`, ssh 는 keepalive.
 - 원격 URL 검증(`urls.validate_remote_url`): 모든 입구(`--remote`·env·cwd 발견·MCP·`hive.toml`)
-  에서. 허용 = `ssh|git+ssh|https|http|git|file://…`, scp 꼴 `[user@]host:path`, 절대 경로.
-  `-` 시작·제어 문자·`x::` transport 거절, http(s)·git URL 의 userinfo 는 무엇이든 거절(자격뿐이다 —
+  에서. 허용 = `ssh|git+ssh|https|http|file://…`(`git://` 은 인증이 없고 멈춤 한도를 걸 자리가 없어 거절), scp 꼴 `[user@]host:path`, 절대 경로.
+  `-` 시작·제어 문자·`x::` transport 거절, http(s) URL 의 userinfo 는 무엇이든 거절(자격뿐이다 —
   credential helper), ssh·scp 꼴의 로그인 이름(`git@`)은 허용 → InvalidState. 오류·로그에 싣는 URL 은
   `redact_url` 로 userinfo 를 `***` 로 가리고 120자로 자른다.
   driver 는 URL·ref 자리마다 `--` 를 둔다.

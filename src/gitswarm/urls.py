@@ -3,7 +3,8 @@
 git 은 원격 자리의 값을 옵션(`--upload-pack=…`)이나 명령 실행 transport(`ext::…`)로도
 읽는다 — 외부에서 온 URL 은 모양을 좁혀 받는다. 프로세스를 띄우지 않는다.
 
-    scheme://…      ssh · git+ssh · https · http · git · file
+    scheme://…      ssh · git+ssh · https · http · file
+                    (git:// 은 아니다 — 멈춤 한도를 걸 자리가 없고 인증도 없다)
     [user@]host:path  scp 꼴(host 에 `/` 없음, path 비지 않음)
     /abs/path       로컬 절대 경로
 """
@@ -14,10 +15,10 @@ import re
 
 from gitswarm.errors import InvalidState
 
-ALLOWED_SCHEMES = frozenset({"ssh", "git+ssh", "https", "http", "git", "file"})
+ALLOWED_SCHEMES = frozenset({"ssh", "git+ssh", "https", "http", "file"})
 SSH_SCHEMES = frozenset({"ssh", "git+ssh"})  # userinfo 는 로그인 이름이다(git@)
 # 이 scheme 의 userinfo 는 자격뿐이다(토큰만 든 user 포함) — credential helper 를 쓰게 거절한다
-NO_USERINFO_SCHEMES = frozenset({"http", "https", "git"})
+NO_USERINFO_SCHEMES = frozenset({"http", "https"})
 USERINFO_MARK = "@"
 LOCAL_SCHEME = "file"  # authority 가 비어도 되는 유일한 scheme(file:///abs)
 SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(.*)$", re.DOTALL)

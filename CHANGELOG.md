@@ -45,10 +45,10 @@ First release: sub-project A, Workspace.
 ### Security
 
 - Every remote URL (flag, env, discovery, MCP, `hive.toml`) passes an
-  allowlist: `ssh`, `git+ssh`, `https`, `http`, `git`, `file`, scp-style or
+  allowlist: `ssh`, `git+ssh`, `https`, `http`, `file`, scp-style or
   absolute paths; no leading `-`, control characters or `x::` transports.
   git gets `--` before URLs and refs.
-- Credentials (userinfo) in http(s)/git URLs are refused — use a credential
+- Credentials (userinfo) in http(s) URLs are refused — use a credential
   helper; ssh login names are fine. URLs in errors and logs are redacted
   (`***@`) and truncated.
 - Records read from the meta branch are untrusted: ids, branch, token id,
