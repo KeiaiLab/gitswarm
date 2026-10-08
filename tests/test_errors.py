@@ -2,6 +2,7 @@ import pytest
 
 from gitswarm.errors import (
     EXIT_CODES,
+    REMOTE_DETAIL_MAX,
     Conflict,
     ErrorKind,
     GitswarmError,
@@ -31,3 +32,9 @@ def test_error_kind_and_exit_code(exc, kind, code):
         "ok": False,
         "error": {"kind": kind.value, "detail": "detail"},
     }
+
+
+def test_remote_error_detail_is_capped():
+    err = RemoteError("remote: " + "x" * 10 * REMOTE_DETAIL_MAX)
+    assert len(err.detail) <= REMOTE_DETAIL_MAX + 1 and err.detail.startswith("remote: x")
+    assert RemoteError("short").detail == "short"

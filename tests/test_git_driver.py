@@ -7,7 +7,7 @@ import pytest
 
 from gitswarm.constants import peek_ref, tracking_ref
 from gitswarm.driver.git import Git
-from gitswarm.errors import InvalidState, RemoteError
+from gitswarm.errors import REMOTE_DETAIL_MAX, InvalidState, RemoteError
 from tests.conftest import count_network, git
 
 
@@ -621,3 +621,10 @@ def test_url_and_refs_follow_double_dash(repo: Git, monkeypatch: pytest.MonkeyPa
     for args in calls:
         dd = args.index("--")
         assert all(not a.startswith("-") for a in args[dd + 1 :]), args
+
+
+def test_git_stderr_is_capped_in_remote_error(repo: Git):
+    # git 은 못 찾은 이름을 stderr 에 그대로 되풀이한다
+    with pytest.raises(RemoteError) as e:
+        repo.cat_file("x" * 10 * REMOTE_DETAIL_MAX)
+    assert len(e.value.detail) <= REMOTE_DETAIL_MAX + 1

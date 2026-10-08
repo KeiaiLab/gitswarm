@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from gitswarm.backoff import backoff_s
 from gitswarm.constants import META_CAS_RETRIES, META_REF, tracking_ref
 from gitswarm.driver.git import Git, LogEntry
-from gitswarm.errors import Conflict
+from gitswarm.errors import Conflict, NotFound
 
 
 @dataclass(frozen=True)
@@ -76,6 +76,9 @@ class MetaStore:
         tip = self.tip()
         if tip is None:
             return []
+        # 받은 뒤에 본다 — 다른 호스트가 알려 준 oid 는 fetch 전에는 없을 수 있다
+        if since is not None and not self.git.exists(f"{since}^{{commit}}"):
+            raise NotFound(f"since {since} is not a meta commit")
         return self.git.log(tracking_ref(META_REF), since)
 
     def apply(self, change: Change) -> str:

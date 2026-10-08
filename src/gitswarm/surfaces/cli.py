@@ -202,7 +202,8 @@ def events_tail(
     ] = None,
 ) -> None:
     svc = service(remote)
-    _emit(with_remote(svc, {"events": [e.to_dict() for e in svc.events(since)]}))
+    events, invalid = svc.events_report(since)
+    _emit(with_remote(svc, {"events": [e.to_dict() for e in events], "invalid": invalid}))
 
 
 # ── 진단·집계 ─────────────────────────────────────────────────

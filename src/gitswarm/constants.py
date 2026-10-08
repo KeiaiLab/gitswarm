@@ -21,7 +21,11 @@ FETCH_LOCK_RETRIES = 5  # 같은 hive 를 쓰는 형제 프로세스와의 로�
 DEFAULT_TTL_S = 7200
 TTL_FOREVER = 0
 MAX_TTL_S = 365 * 24 * 3600  # 1 년. 날짜 연산이 넘치지 않는 상한
+ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 TOKEN_ID_RE = re.compile(r"[0-9]+")  # 원격 PAT id: URL 경로에 들어가므로 숫자만
+# 원격이 정한 값은 크기를 믿지 않는다 — 레코드 하나가 모두의 출력(MCP 문맥)을 채우지 못하게
+MAX_RECORD_BYTES = 64 * 1024
+SHOWN_TEXT_MAX = 120  # 오류 문구에 되풀이하는 원격 텍스트의 최대 길이
 
 COMMIT_AUTHOR = "gitswarm"
 COMMIT_EMAIL = "gitswarm@localhost"

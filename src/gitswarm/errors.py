@@ -2,6 +2,10 @@
 
 from enum import StrEnum
 
+# git stderr 의 서버 "remote:" 줄은 길이 제한이 없다 — 앞부분만 싣는다
+REMOTE_DETAIL_MAX = 2048
+TRUNCATED = "…"
+
 
 class ErrorKind(StrEnum):
     NOT_FOUND = "NotFound"
@@ -49,3 +53,8 @@ class Unsupported(GitswarmError):
 
 class RemoteError(GitswarmError):
     kind = ErrorKind.REMOTE_ERROR
+
+    def __init__(self, detail: str) -> None:
+        if len(detail) > REMOTE_DETAIL_MAX:
+            detail = detail[:REMOTE_DETAIL_MAX] + TRUNCATED
+        super().__init__(detail)

@@ -7,7 +7,16 @@ from pathlib import Path
 import pytest
 
 from gitswarm.adapters.plain import PlainAdapter
-from gitswarm.constants import META_REF, lease_ref, meta_path, peek_ref, tracking_ref, ws_ref
+from gitswarm.constants import (
+    MAX_RECORD_BYTES,
+    META_REF,
+    SHOWN_TEXT_MAX,
+    lease_ref,
+    meta_path,
+    peek_ref,
+    tracking_ref,
+    ws_ref,
+)
 from gitswarm.errors import Conflict, InvalidState, NotFound, RemoteError
 from gitswarm.service import workspace as ws_mod
 from gitswarm.service.doctor import diagnose
@@ -68,6 +77,36 @@ def test_forged_branch_aimed_at_live_workspace_fails_closed(svc: WorkspaceServic
         svc.drop(FORGED_ID)
     assert svc.hive.git.ls_remote(victim.branch) == victim.base_oid
     assert svc.get(victim.id).state is WsState.OPEN
+
+
+LONG = 10_000  # 레코드 상한 아래 — 크기가 아니라 문구 길이가 걸린다
+SHORT_DETAIL = 3 * SHOWN_TEXT_MAX  # 문구 + 잘린 값 둘까지
+
+
+def test_long_remote_text_is_cut_in_details(svc: WorkspaceService):
+    _write(svc, FORGED_ID, _with(FORGED_ID, branch="b" * LONG))
+    with pytest.raises(InvalidState, match="stored branch") as e:
+        svc.get(FORGED_ID)
+    assert len(e.value.detail) < SHORT_DETAIL
+    (bad,) = svc.list_report(None)[1]
+    assert len(bad["detail"]) < SHORT_DETAIL
+    with pytest.raises(NotFound) as e:
+        svc.get("x" * LONG)
+    assert len(e.value.detail) < SHORT_DETAIL
+
+
+def test_oversized_record_is_invalid_not_read(svc: WorkspaceService):
+    _write(svc, FORGED_ID, _with(FORGED_ID, labels={"k": "x" * MAX_RECORD_BYTES}))
+    with pytest.raises(InvalidState, match=f"> {MAX_RECORD_BYTES}"):
+        svc.get(FORGED_ID)
+    assert [i["id"] for i in svc.list_report(None)[1]] == [FORGED_ID]
+
+
+def test_create_refuses_record_over_size_limit(svc: WorkspaceService):
+    with pytest.raises(InvalidState, match=f"> {MAX_RECORD_BYTES}"):
+        svc.create("main", {}, 0, None, Checkout.NONE, {"k": "x" * MAX_RECORD_BYTES})
+    assert svc.store.list("ws/") == []
+    assert ls_remote_prefix(svc.hive.git.repo, ws_ref("")) == {}
 
 
 @pytest.mark.parametrize(
@@ -175,10 +214,9 @@ def test_unexpected_meta_path_is_reported_not_read(remote_url: str, home: Path):
     assert tokens["ok"] is True
 
 
-def test_events_rejects_subject_without_workspace_id(svc: WorkspaceService):
-    svc.store.apply(Change("ws/x.json", lambda _: b"{}", "ws.created ../../etc"))
-    with pytest.raises(InvalidState, match="unexpected subject"):
-        svc.events(None)
+def test_events_skip_subject_without_workspace_id(svc: WorkspaceService):
+    oid = svc.store.apply(Change("ws/x.json", lambda _: b"{}", "ws.created ../../etc"))
+    assert svc.events_report(None) == ([], [{"oid": oid, "detail": "unexpected subject"}])
 
 
 # ── text fields ──────────────────────────────────────────────

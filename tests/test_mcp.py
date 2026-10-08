@@ -135,6 +135,7 @@ def test_events_tail_via_mcp(remote_url: str, home: Path):
     out = call("events_tail", remote=remote_url)
     assert out["ok"] is True
     assert [e["kind"] for e in out["events"]] == ["ws.dropped", "ws.created"]
+    assert out["invalid"] == []
 
 
 def test_events_tail_bad_since_is_payload(remote_url: str, home: Path):

@@ -11,8 +11,9 @@ def summarize(svc: WorkspaceService) -> dict:
     """{by_kind, by_state, open_oldest_age_s, total_events, invalid, unrevoked_tokens}.
 
     open 이 없으면 age 는 None. unrevoked_tokens = 회수에 실패한 토큰을 든 dropped 레코드 수.
+    invalid = 못 읽은 레코드 + 못 읽은 meta 커밋(이벤트) — 둘 다 meta 를 손봐야 한다는 신호다.
     """
-    events = svc.events(None)
+    events, bad_events = svc.events_report(None)
     good, invalid = svc.list_report(None)
 
     # 가장 오래 열린 workspace — 회수가 밀리는지 보는 지표
@@ -24,6 +25,6 @@ def summarize(svc: WorkspaceService) -> dict:
         "by_state": dict(Counter(w.state.value for w in good)),
         "open_oldest_age_s": oldest,
         "total_events": len(events),
-        "invalid": len(invalid),
+        "invalid": len(invalid) + len(bad_events),
         "unrevoked_tokens": len(unrevoked(good)),
     }

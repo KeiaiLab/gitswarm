@@ -144,9 +144,10 @@ def workspace_gc(remote: str | None = None) -> dict:
 @mcp.tool
 @payload
 def events_tail(remote: str | None = None, since: str | None = None) -> dict:
-    """Events from the meta log, newest first. since = only events after this meta oid. Returns {ok, events: [{kind, id, oid, at, payload}], remote}. On failure returns {ok: false, error: {kind, detail}}."""
+    """Events from the meta log, newest first. since = only events after this meta oid. Returns {ok, events: [{kind, id, oid, at, payload}], invalid: [{oid, detail}], remote}; invalid lists meta commits that could not be read as events (skipped, not fatal). On failure returns {ok: false, error: {kind, detail}}."""
     svc = service(remote)
-    return with_remote(svc, {"events": [e.to_dict() for e in svc.events(since)]})
+    events, invalid = svc.events_report(since)
+    return with_remote(svc, {"events": [e.to_dict() for e in events], "invalid": invalid})
 
 
 @mcp.tool

@@ -25,10 +25,13 @@ from gitswarm.adapters.select import adapter_for, repo_name
 from gitswarm.config import load_config
 from gitswarm.constants import (
     HEADS,
+    MAX_RECORD_BYTES,
     MAX_TTL_S,
+    SHOWN_TEXT_MAX,
     TOKEN_ID_RE,
     TRASH_REF,
     TTL_FOREVER,
+    ULID_RE,
     WS_DIR,
     lease_ref,
     meta_path,
@@ -37,8 +40,9 @@ from gitswarm.constants import (
     ws_branch,
     ws_ref,
 )
-from gitswarm.driver.git import Git
+from gitswarm.driver.git import Git, LogEntry
 from gitswarm.errors import (
+    TRUNCATED,
     Conflict,
     GitswarmError,
     InvalidState,
@@ -46,20 +50,24 @@ from gitswarm.errors import (
     RemoteError,
     Unsupported,
 )
-from gitswarm.events import Event, Sink, parse_subject, sinks_from_config
+from gitswarm.events import (
+    EV_CREATED,
+    EV_DROPPED,
+    EV_EXPIRED,
+    EV_PUBLISHED,
+    EV_REVOKED,
+    EVENT_KINDS,
+    Event,
+    Sink,
+    parse_subject,
+    sinks_from_config,
+)
 from gitswarm.store.hive import Hive
 from gitswarm.store.meta import Change, MetaStore
 
-ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 RECORD_PATH_RE = re.compile(rf"{WS_DIR}/[0-9A-HJKMNP-TV-Z]{{26}}\.json")  # fullmatch 로만
 UNEXPECTED_PATH = "unexpected meta path"
 OID_RE = re.compile(r"^[0-9a-f]{40}$")
-
-EV_CREATED = "ws.created"
-EV_PUBLISHED = "ws.published"
-EV_DROPPED = "ws.dropped"
-EV_EXPIRED = "ws.expired"
-EV_REVOKED = "ws.revoked"  # dropped 레코드의 토큰을 뒤늦게 회수했다
 
 # 두 publish 경로가 같은 판정, 다음 행동만 다르다
 NOTHING_PUBLISHED = "nothing published: branch is still at base"
@@ -71,6 +79,7 @@ OPTIONAL_STR_FIELDS = ("parent", "token_id", "published_oid")
 TEXT_MAP_FIELDS = ("agent", "labels")  # 자유 텍스트: str → str 사전
 
 MALFORMED = "malformed workspace record"
+UNEXPECTED_SUBJECT = "unexpected subject"  # 제목은 되풀이하지 않는다 — 원격이 정한 텍스트다
 BAD_CREATE = "invalid create input"
 
 
@@ -100,13 +109,21 @@ TRANSITIONS: dict[WsState, frozenset[WsState]] = {
 }
 
 
+def _shown(value: object) -> str:
+    """오류 문구에 넣을 repr. 원격이 정한 값은 길이를 믿지 않는다 — 앞 SHOWN_TEXT_MAX 자만."""
+    text = repr(value)
+    if len(text) <= SHOWN_TEXT_MAX:
+        return text
+    return text[:SHOWN_TEXT_MAX] + TRUNCATED
+
+
 def _no_workspace(ws_id: str) -> str:
     return f"workspace {ws_id} not found; `gitswarm ws list` shows ids"
 
 
 def _check_id(ws_id: str) -> str:
     if not ULID_RE.fullmatch(ws_id):
-        raise NotFound(f"invalid workspace id: {ws_id!r}")
+        raise NotFound(f"invalid workspace id: {_shown(ws_id)}")
     return ws_id
 
 
@@ -118,13 +135,13 @@ def _valid_ttl(ttl: object) -> bool:
 def _check_expiry(ws: Workspace) -> None:
     ttl = ws.ttl_s
     if not _valid_ttl(ttl):
-        raise InvalidState(f"{ws.id}: invalid ttl_s {ttl!r}")
+        raise InvalidState(f"{ws.id}: invalid ttl_s {_shown(ttl)}")
     try:
         born = datetime.fromisoformat(ws.created_at.replace("Z", "+00:00"))
     except (AttributeError, ValueError) as e:
-        raise InvalidState(f"{ws.id}: invalid created_at {ws.created_at!r}") from e
+        raise InvalidState(f"{ws.id}: invalid created_at {_shown(ws.created_at)}") from e
     if born.tzinfo is None:
-        raise InvalidState(f"{ws.id}: created_at {ws.created_at!r} has no timezone")
+        raise InvalidState(f"{ws.id}: created_at {_shown(ws.created_at)} has no timezone")
 
 
 def _expired(ws: Workspace, now: datetime) -> bool:
@@ -218,11 +235,17 @@ class Workspace:
         return d
 
     def to_json(self) -> bytes:
-        return (json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True) + "\n").encode()
+        """기록할 내용. 읽는 쪽이 거절할 크기면 쓰지 않는다(create 는 보상으로 되돌린다)."""
+        data = (json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True) + "\n").encode()
+        if len(data) > MAX_RECORD_BYTES:
+            raise InvalidState(f"record of {len(data)} bytes > {MAX_RECORD_BYTES}")
+        return data
 
     @classmethod
     def from_json(cls, data: bytes) -> Workspace:
         """원격 레코드 → Workspace. 어떤 모양이 와도 실패는 InvalidState 하나다."""
+        if len(data) > MAX_RECORD_BYTES:
+            raise InvalidState(f"{MALFORMED}: {len(data)} bytes > {MAX_RECORD_BYTES}")
         try:
             d = json.loads(data)
             d["state"] = WsState(d["state"])
@@ -234,17 +257,19 @@ class Workspace:
         _check_str_fields(ws)
         _check_record_text(ws)
         if not ULID_RE.fullmatch(ws.id):
-            raise InvalidState(f"malformed workspace record: id {ws.id!r}")
+            raise InvalidState(f"malformed workspace record: id {_shown(ws.id)}")
         if ws.branch != ws_ref(ws.id):
             raise InvalidState(
-                f"{ws.id}: stored branch {ws.branch!r} does not match {ws_ref(ws.id)!r}"
+                f"{ws.id}: stored branch {_shown(ws.branch)} does not match {_shown(ws_ref(ws.id))}"
             )
         if ws.parent is not None and not ULID_RE.fullmatch(ws.parent):
-            raise InvalidState(f"{ws.id}: invalid parent {ws.parent!r}")
+            raise InvalidState(f"{ws.id}: invalid parent {_shown(ws.parent)}")
         if ws.token_id is not None and not TOKEN_ID_RE.fullmatch(ws.token_id):
-            raise InvalidState(f"{ws.id}: invalid token id {ws.token_id!r}")
+            raise InvalidState(f"{ws.id}: invalid token id {_shown(ws.token_id)}")
         if ws.published_oid is not None and not OID_RE.fullmatch(ws.published_oid):
-            raise InvalidState(f"malformed workspace record: published_oid {ws.published_oid!r}")
+            raise InvalidState(
+                f"malformed workspace record: published_oid {_shown(ws.published_oid)}"
+            )
         _check_expiry(ws)
         return ws
 
@@ -289,7 +314,7 @@ def _parse_record(ws_id: str, data: bytes) -> Workspace:
     """ws/<ws_id>.json 의 내용. 안의 id 가 경로와 다르면 위조다."""
     ws = Workspace.from_json(data)
     if ws.id != ws_id:
-        raise InvalidState(f"{ws_id}: record carries id {ws.id!r}")
+        raise InvalidState(f"{ws_id}: record carries id {_shown(ws.id)}")
     return ws
 
 
@@ -363,6 +388,30 @@ def _new_only(prev: bytes | None, ws: Workspace) -> Workspace:
     if prev is not None:
         raise Conflict(f"workspace id {ws.id} already recorded")
     return ws
+
+
+def _event_subject(subject: str) -> tuple[str, str] | None:
+    """ "<kind> <id>" 이고 kind 가 닫힌 집합이면 (kind, id), 아니면 None."""
+    kind, ws_id = parse_subject(subject)
+    if kind not in EVENT_KINDS or not ULID_RE.fullmatch(ws_id):
+        return None
+    return kind, ws_id
+
+
+def _to_event(
+    entry: LogEntry, subject: tuple[str, str] | None, blobs: dict[tuple[str, str], bytes]
+) -> Event:
+    """meta 커밋 하나 → Event. 제목·레코드가 검증을 못 지나면 InvalidState."""
+    if subject is None:
+        raise InvalidState(UNEXPECTED_SUBJECT)
+    kind, ws_id = subject
+
+    # 커밋은 그 레코드를 썼다고 말한다 — 없으면 meta 가 위조됐다
+    raw = blobs.get((entry.oid, meta_path(ws_id)))
+    if raw is None:
+        raise InvalidState(f"missing {meta_path(ws_id)}")
+    ws = _parse_record(ws_id, raw)
+    return Event(kind=kind, id=ws_id, oid=entry.oid, at=entry.committed_at, payload=ws.to_dict())
 
 
 class WorkspaceService:
@@ -446,7 +495,7 @@ class WorkspaceService:
         labels: dict,
     ) -> CreateResult:
         if not _valid_ttl(ttl_s):
-            raise InvalidState(f"ttl_s must be an integer in [0, {MAX_TTL_S}], got {ttl_s!r}")
+            raise InvalidState(f"ttl_s must be an integer in [0, {MAX_TTL_S}], got {_shown(ttl_s)}")
         # 기록할 수 없는 텍스트는 원격에 아무것도 만들기 전에 거른다
         _check_text(BAD_CREATE, [base_ref], {"agent": agent, "labels": labels})
         parent = self.get(from_ws) if from_ws else None
@@ -540,7 +589,7 @@ class WorkspaceService:
     @staticmethod
     def _safe_path(path: str) -> str:
         if not path or path.startswith("/") or ".." in path.split("/"):
-            raise NotFound(f"invalid path: {path!r}")
+            raise NotFound(f"invalid path: {_shown(path)}")
         return path
 
     def read(self, ws_id: str, path: str) -> bytes:
@@ -595,7 +644,7 @@ class WorkspaceService:
         branch = ws_ref(ws_id)
         if isinstance(stored, str) and stored != branch:
             raise InvalidState(
-                f"{ws_id}: stored branch {stored!r} does not match {branch!r}; not dropping"
+                f"{ws_id}: stored branch {_shown(stored)} does not match {_shown(branch)}; not dropping"
             )
 
         # 레코드를 못 믿으니 lease 기준도 없다 — 무조건 삭제(멱등)
@@ -773,30 +822,29 @@ class WorkspaceService:
         return {"expired": expired, "invalid": invalid, "conflicted": conflicted}
 
     def events(self, since: str | None) -> list[Event]:
+        return self.events_report(since)[0]
+
+    def events_report(self, since: str | None) -> tuple[list[Event], list[dict]]:
+        """(이벤트, 못 읽은 meta 커밋 [{oid, detail}]), 새것부터. 나쁜 since 만 예외다.
+
+        망가진 커밋 하나(손으로 고친 레코드·낯선 제목)가 모두의 로그·stats 를 멈추지 않게
+        list 처럼 따로 보고한다. 제목·레코드는 원격이 정한다 — 검증한 것만 내보낸다.
+        """
         if since is not None and not OID_RE.fullmatch(since):
-            raise NotFound(f"invalid since oid: {since!r}")
+            raise NotFound(f"invalid since oid: {_shown(since)}")
 
-        entries = [(e, *parse_subject(e.subject)) for e in self.store.log(since)]
-        for entry, _, ws_id in entries:
-            if not ULID_RE.fullmatch(ws_id):  # 제목이 경로를 정한다 — id 가 아니면 읽지 않는다
-                raise InvalidState(f"meta {entry.oid}: unexpected subject {entry.subject!r}")
-        blobs = self.store.read_many([(e.oid, meta_path(ws_id)) for e, _, ws_id in entries])
+        # 제목이 경로를 정한다 — 닫힌 종류와 id 가 아니면 읽지 않는다
+        entries = [(e, _event_subject(e.subject)) for e in self.store.log(since)]
+        blobs = self.store.read_many([(e.oid, meta_path(s[1])) for e, s in entries if s])
 
-        out = []
-        for entry, kind, ws_id in entries:
-            raw = blobs.get((entry.oid, meta_path(ws_id)))
-            if raw is None:  # 커밋은 그 레코드를 썼다고 말한다 — 없으면 meta 가 위조됐다
-                raise InvalidState(f"meta {entry.oid}: missing {meta_path(ws_id)}")
+        events: list[Event] = []
+        invalid: list[dict] = []
+        for entry, subject in entries:
             try:
-                data = json.loads(raw)
-            except ValueError:
-                data = None
-            if not isinstance(data, dict):
-                raise InvalidState(f"corrupt workspace record at {entry.oid}: {meta_path(ws_id)}")
-            out.append(
-                Event(kind=kind, id=ws_id, oid=entry.oid, at=entry.committed_at, payload=data)
-            )
-        return out
+                events.append(_to_event(entry, subject, blobs))
+            except InvalidState as e:
+                invalid.append({"oid": entry.oid, "detail": e.detail})
+        return events, invalid
 
     # ── 공통 ──────────────────────────────────────────────────
     def _record(

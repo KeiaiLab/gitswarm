@@ -18,6 +18,14 @@ from gitswarm.config import Config
 from gitswarm.errors import InvalidState
 from gitswarm.urls import redact_url
 
+EV_CREATED = "ws.created"
+EV_PUBLISHED = "ws.published"
+EV_DROPPED = "ws.dropped"
+EV_EXPIRED = "ws.expired"
+EV_REVOKED = "ws.revoked"  # dropped 레코드의 토큰을 뒤늦게 회수했다
+# meta 커밋 제목의 첫 낱말은 이 닫힌 집합뿐이다 — 그 밖은 이벤트로 읽지 않는다
+EVENT_KINDS = frozenset({EV_CREATED, EV_PUBLISHED, EV_DROPPED, EV_EXPIRED, EV_REVOKED})
+
 WEBHOOK_TIMEOUT_S = 5
 SINK_JSONL = "jsonl"
 SINK_WEBHOOK = "webhook"
